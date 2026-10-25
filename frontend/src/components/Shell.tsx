@@ -3,7 +3,6 @@ import { useComputedColorScheme, useMantineColorScheme } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getJSON, postJSON, useApi, type Summary } from '../api';
-import { day } from '../format';
 import { Avatar } from './ui';
 
 const LINKS = [
@@ -98,26 +97,14 @@ const DISCLAIMER =
 
 function Footer() {
   const s = useApi<Summary>('/summary');
-  const p = s.data?.pipeline;
   return (
     <footer className="foot">
-      <div className="in">
+      <div className="in one">
         <div>
           <p className="warn"><b>Not financial advice.</b> {s.data?.disclaimer ?? DISCLAIMER}</p>
           <p>
             Free and open for every retail investor, in support of SDG 8 target 8.10 (access to financial services for all).
             Recommendations from {s.data?.brokers ?? 17} Malaysian brokers' public research reports; prices from Yahoo Finance.
-          </p>
-        </div>
-        <div>
-          <p>
-            <b>Data</b> · {s.data ? `${s.data.recommendations.toLocaleString()} calls · ${s.data.analysts} analysts · ${s.data.stocks} stocks` : '…'}
-            {p?.as_of && <> · prices up to {day(p.as_of)}</>}
-            {p?.computed_at && <> · scores computed {day(p.computed_at)}</>}
-          </p>
-          <p>
-            <b>Open data</b> · <a href="/api/export/recommendations.csv">Download all calls (CSV)</a> ·{' '}
-            <a href="/api/export/analysts.csv">Download analyst scores (CSV)</a>
           </p>
         </div>
       </div>

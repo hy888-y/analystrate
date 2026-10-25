@@ -233,3 +233,4 @@ a { color: inherit; text-decoration: none; }
 .chipset span { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: var(--hold-soft); }
 .tbl table.wrap { min-width: 0; }
 .tbl table.wrap td, .tbl table.wrap th { white-space: normal; padding: 8px 10px; }
+.foot .in.one { grid-template-columns: minmax(0, 1fr); max-width: 900px; }
