@@ -1,6 +1,7 @@
 """REST API consumed by the React dashboard."""
 from flask import Blueprint, abort, jsonify, request
 from sqlalchemy import func, or_
+from sqlalchemy.orm import contains_eager, joinedload
 
 from app.config import FACTOR_LABELS, RISK_LEVELS, RISK_WEIGHTS, THIN_SAMPLE, WEIGHTS
 from app.extensions import db
@@ -8,6 +9,12 @@ from app.models import Analyst, AnalystScore, Broker, Meta, Recommendation, Stoc
 from app.modules.confidence import explain, explain_call
 
 api = Blueprint("api", __name__)
+
+# Load each call together with its stock, broker, analyst, analyst's broker and score in ONE query
+# (instead of 4-5 extra queries per call). Matters when the database is far away (hosted).
+REC_LOAD = (joinedload(Recommendation.stock), joinedload(Recommendation.broker),
+            joinedload(Recommendation.analyst).joinedload(Analyst.broker),
+            joinedload(Recommendation.analyst).joinedload(Analyst.score))
 
 # IR 1.5.3: the system rates the reliability of past recommendations; it is not a stock recommender.
 DISCLAIMER = ("AnalystRate rates how reliable analysts' past recommendations have been. It is not a stock "
@@ -83,7 +90,7 @@ def analysts():
     sort_col = {"score": AnalystScore.score, "hit_rate": AnalystScore.raw_success,
                 "n_evaluated": AnalystScore.n_evaluated, "name": Analyst.name}.get(sort, AnalystScore.score)
 
-    query = (db.session.query(Analyst, AnalystScore).join(Broker)
+    query = (db.session.query(Analyst, AnalystScore).join(Analyst.broker).options(contains_eager(Analyst.broker))
              .outerjoin(AnalystScore, AnalystScore.analyst_id == Analyst.id))
     if q:
         query = query.filter(or_(Analyst.name.ilike(f"%{q}%"), Broker.name.ilike(f"%{q}%")))
@@ -160,13 +167,14 @@ def analyst_recs(aid):
     limit = min(request.args.get("limit", type=int, default=25), 200)
     offset = request.args.get("offset", type=int, default=0)
     base = Recommendation.query.filter_by(analyst_id=aid)
-    rows = base.order_by(Recommendation.report_date.desc()).offset(offset).limit(limit).all()
+    rows = (base.options(*REC_LOAD).order_by(Recommendation.report_date.desc(), Recommendation.id.desc())
+            .offset(offset).limit(limit).all())
     return jsonify({"total": base.count(), "items": [rec_row(r) for r in rows]})
 
 
 @api.get("/recommendations/<int:rid>")
 def recommendation(rid):
-    r = db.session.get(Recommendation, rid) or abort(404)
+    r = Recommendation.query.options(*REC_LOAD).filter_by(id=rid).first() or abort(404)
     out = rec_row(r)
     out["analyst_info"] = {"id": r.analyst.id, "name": r.analyst.name, "broker": r.analyst.broker.name}
     return jsonify(out)

@@ -52,10 +52,6 @@ export function MethodPage() {
           <h1>How it’s scored, and how well it works</h1>
           <p>CRISP-DM Modelling and Evaluation. Every number on this page is produced by the backend pipeline from the cleaned dataset and Yahoo Finance prices.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a className="btn" href="/api/export/recommendations.csv">⬇ All calls (CSV)</a>
-          <a className="btn" href="/api/export/analysts.csv">⬇ Analyst scores (CSV)</a>
-        </div>
       </div>
 
       <div className="cols2">

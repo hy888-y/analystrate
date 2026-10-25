@@ -34,7 +34,6 @@ export function AnalystsPage() {
     <div className="page">
       <div className="ph">
         <div><h1>Analyst rankings</h1><p>Ranked by Explainable Confidence Score: how often their calls actually played out, and why.</p></div>
-        <a className="btn" href="/api/export/analysts.csv">⬇ Download scores (CSV)</a>
       </div>
       {s && (
         <div className="stat4">

@@ -18,4 +18,6 @@ COPY backend/ backend/
 COPY --from=web /web/dist frontend/dist
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
-CMD ["sh", "-c", "gunicorn --chdir backend wsgi:app --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 120"]
+# 1 process with 8 threads: uses little memory (free plan = 512 MB) and a slow page never blocks
+# Render's health check, so the instance is not restarted mid-request.
+CMD ["sh", "-c", "gunicorn --chdir backend wsgi:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 8 --worker-class gthread --timeout 120"]

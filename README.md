@@ -39,7 +39,7 @@ fyp-analyst-reliability/
 | Obj 4: Bias Detection + Risk Meter, public dashboard (React + Flask) | `bias.py`, `risk.py`; Flask serves the built React site; `Dockerfile` / `render.yaml` |
 | 1.2: an analyst's record on the stock / sector you invest in | stock page: "On MAYBANK: 5/10 played out · Financial Services: 61%"; analyst page: record by sector |
 | 1.5.3: not a stock recommender, not financial advice | footer on every page, `/api/summary` disclaimer |
-| 1.6.1 / 1.5.4: cleaned dataset as a public resource for investors, students, researchers | CSV downloads (`/api/export/...`) |
+| 1.6.1 / 1.5.4: cleaned dataset as a public resource | CSV export built in (`/api/export/...`), switched off on the public site (`OPEN_DATA = False` in config.py) |
 | 2.2.2: buy share, sell avoidance, average target deviation vs market; buy-to-sell ratio | `bias.py` (average deviation, each capped at ±100%) |
 | 2.2.3: risk = stock-specific track record, volatility, score alignment; graded, per call | `risk.py`: track, volatility, implied move, trust score, alignment with consensus |
 | 2.2.4: score breakdown panel with each factor's contribution | analyst page "Why this score", call row "Why trust this call?" |
@@ -141,7 +141,7 @@ cd backend; pytest -q
 | `GET /api/stocks?q=` / `GET /api/stocks/{code}` | stock search / all calls on a stock |
 | `GET /api/meta` | weights, risk levels, full evaluation (model comparison, tests, LIME, min calls, cohorts) |
 | `GET /api/brokers` | per-broker calls, hit rate, rating mix, average trust |
-| `GET /api/export/recommendations.csv` · `/api/export/analysts.csv` | open data downloads |
+| `GET /api/export/recommendations.csv` · `/api/export/analysts.csv` | CSV downloads (off unless `OPEN_DATA = True`) |
 | `POST /api/feedback` · `GET /api/feedback/summary` | anonymous usability ratings |
 
 ## Design decisions to justify in the final report

@@ -74,3 +74,7 @@ VALIDATION_SPLIT = "2024-10-01"
 # The model comparison uses calls whose analyst already had at least this many scored calls on the
 # call date; before that every factor is only the market default and carries no information.
 MIN_HISTORY_FOR_MODELS = 1
+
+# ---------- Data downloads ----------
+# CSV export of all calls / analyst scores. Switched off: the public website does not offer downloads.
+OPEN_DATA = False

@@ -149,9 +149,9 @@ def test_stock_brokers_exports_feedback(app):
     b = c.get("/api/brokers").get_json()["items"]
     assert len(b) == 4 and sum(x["calls"] for x in b) == c.get("/api/summary").get_json()["recommendations"]
 
-    csv = c.get("/api/export/recommendations.csv")
-    assert csv.status_code == 200 and csv.data.decode().startswith("report_date,")
-    assert c.get("/api/export/analysts.csv").status_code == 200
+    # downloads are switched off on the public site (config.OPEN_DATA = False)
+    assert c.get("/api/export/recommendations.csv").status_code == 404
+    assert c.get("/api/export/analysts.csv").status_code == 404
 
     assert c.post("/api/feedback", json={"page": "analysts", "clarity": 4, "useful": 5}).status_code == 201
     assert c.post("/api/feedback", json={"page": "analysts", "clarity": 9}).status_code == 400

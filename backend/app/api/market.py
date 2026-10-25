@@ -3,12 +3,13 @@ from datetime import timedelta
 
 from flask import abort, jsonify, request
 from sqlalchemy import func, or_
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import Analyst, AnalystScore, Broker, Price, Recommendation, Stock
 from pipeline.outcomes import split_factor
 
-from .routes import api, meta, rec_row
+from .routes import REC_LOAD, api, meta, rec_row
 
 
 @api.get("/insights")
@@ -19,29 +20,36 @@ def insights():
         return jsonify({"date": None, "calls": [], "counts": {}, "top": [], "changes": []})
     days = request.args.get("days", type=int, default=1)
     since = last - timedelta(days=days - 1)
-    calls = (Recommendation.query.filter(Recommendation.report_date >= since)
+    calls = (Recommendation.query.options(*REC_LOAD).filter(Recommendation.report_date >= since)
              .order_by(Recommendation.report_date.desc(), Recommendation.id.desc()).all())
     counts = {"total": len(calls)}
     for r in ("BUY", "HOLD", "SELL"):
         counts[r] = sum(c.rating == r for c in calls)
 
-    top = (db.session.query(Analyst, AnalystScore).join(AnalystScore)
+    top = (db.session.query(Analyst, AnalystScore).join(AnalystScore).options(joinedload(Analyst.broker))
            .filter(AnalystScore.n_evaluated >= 30).order_by(AnalystScore.score.desc()).limit(6).all())
 
-    # rating changes: an analyst's call differs from their previous call on the same stock
-    recent = Recommendation.query.order_by(Recommendation.report_date.desc()).limit(600).all()
-    changes = []
-    for r in recent:
-        prev = (Recommendation.query.filter(Recommendation.analyst_id == r.analyst_id,
-                                            Recommendation.stock_id == r.stock_id,
-                                            Recommendation.report_date < r.report_date)
-                .order_by(Recommendation.report_date.desc()).first())
-        if prev and prev.rating != r.rating:
-            order = {"SELL": 0, "HOLD": 1, "BUY": 2}
-            changes.append(rec_row(r) | {"from": prev.rating,
-                                         "direction": "Upgrade" if order[r.rating] > order[prev.rating] else "Downgrade"})
-        if len(changes) >= 8:
-            break
+    # rating changes: an analyst's call differs from their previous call on the same stock.
+    # One light query of every call, then compare in Python (instead of one query per call).
+    light = (db.session.query(Recommendation.id, Recommendation.analyst_id, Recommendation.stock_id,
+                              Recommendation.report_date, Recommendation.rating)
+             .order_by(Recommendation.report_date, Recommendation.id).all())
+    prev_of, last_seen = {}, {}
+    for rid, aid, sid, _d, rating in light:
+        if (aid, sid) in last_seen:
+            prev_of[rid] = last_seen[(aid, sid)]
+        last_seen[(aid, sid)] = rating
+    order = {"SELL": 0, "HOLD": 1, "BUY": 2}
+    picked = []
+    for rid, _aid, _sid, _d, rating in reversed(light):
+        p = prev_of.get(rid)
+        if p and p != rating:
+            picked.append((rid, p, "Upgrade" if order[rating] > order[p] else "Downgrade"))
+            if len(picked) >= 8:
+                break
+    objs = {r.id: r for r in Recommendation.query.options(*REC_LOAD)
+            .filter(Recommendation.id.in_([x[0] for x in picked])).all()} if picked else {}
+    changes = [rec_row(objs[rid]) | {"from": p, "direction": d} for rid, p, d in picked if rid in objs]
     return jsonify({
         "date": last.isoformat(), "since": since.isoformat(), "counts": counts,
         "calls": [rec_row(c) for c in calls],
@@ -55,7 +63,7 @@ def insights():
 @api.get("/recommendations")
 def recommendations():
     """Call screener used by the quick-view chips."""
-    q = Recommendation.query.join(Analyst).join(Stock)
+    q = Recommendation.query.join(Analyst).join(Stock).options(*REC_LOAD)
     if r := request.args.get("rating"):
         q = q.filter(Recommendation.rating == r.upper())
     if v := request.args.get("risk"):
@@ -83,7 +91,8 @@ def recommendations():
 @api.get("/stocks/<code>")
 def stock(code):
     s = Stock.query.filter_by(code=code.zfill(4)).first() or abort(404)
-    recs = Recommendation.query.filter_by(stock_id=s.id).order_by(Recommendation.report_date.desc()).all()
+    recs = (Recommendation.query.options(*REC_LOAD).filter_by(stock_id=s.id)
+            .order_by(Recommendation.report_date.desc(), Recommendation.id.desc()).all())
     rows = [rec_row(r) for r in recs]
     # chart targets are put on Yahoo's split-adjusted basis
     for row, r in zip(rows, recs):
@@ -112,9 +121,10 @@ def stock(code):
                 "label": label, "avg_target": sum(tps) / len(tps) if tps else None, "analysts": len(views)}
 
     # IR 1.2: how has each covering analyst done on THIS stock and in THIS sector?
-    coverage, on_stock = {}, {}
+    coverage, on_stock, score_of = {}, {}, {}
     for row, r in zip(rows, recs):
         coverage.setdefault(row["analyst_id"], row)
+        score_of[r.analyst_id] = r.analyst.score
         st = on_stock.setdefault(r.analyst_id, {"calls": 0, "evaluated": 0, "hits": 0})
         st["calls"] += 1
         if r.status == "evaluated":
@@ -125,7 +135,7 @@ def stock(code):
         st = on_stock[aid]
         st["hit_rate"] = round(100 * st["hits"] / st["evaluated"], 1) if st["evaluated"] else None
         sec = None
-        sc = db.session.get(AnalystScore, aid)
+        sc = score_of.get(aid)
         if sc and sc.breakdown and s.sector:
             sec = next((x for x in sc.breakdown.get("by_sector", []) if x["sector"] == s.sector), None)
         covering.append(row | {"on_stock": st, "in_sector": sec, "overall_hit_rate": sc.raw_success if sc else None})
@@ -155,7 +165,7 @@ def search():
         return jsonify({"stocks": [], "analysts": []})
     st = (Stock.query.filter(or_(Stock.name.ilike(f"%{q}%"), Stock.code.ilike(f"{q}%")))
           .order_by(Stock.name).limit(6).all())
-    an = (db.session.query(Analyst, AnalystScore).join(Broker)
+    an = (db.session.query(Analyst, AnalystScore).join(Broker).options(joinedload(Analyst.broker))
           .outerjoin(AnalystScore, AnalystScore.analyst_id == Analyst.id)
           .filter(or_(Analyst.name.ilike(f"%{q}%"), Broker.name.ilike(f"%{q}%")))
           .order_by(AnalystScore.score.desc().nullslast()).limit(6).all())
@@ -199,8 +209,11 @@ def brokers():
     return jsonify({"items": out, "market": meta("market_bias", {}) | {"hit_rate": meta("market_score", {}).get("hit_rate")}})
 
 
-# ---------------- open data (IR 1.6.1: the cleaned dataset as a public resource) ----------------
+# ---------------- CSV export (switched off by OPEN_DATA in config.py) ----------------
 def _csv(rows: list[dict], name: str):
+    from app.config import OPEN_DATA
+    if not OPEN_DATA:
+        abort(404)
     import csv
     import io
 
@@ -235,7 +248,7 @@ def export_recommendations():
 @api.get("/export/analysts.csv")
 def export_analysts():
     q = (db.session.query(Analyst, AnalystScore).join(AnalystScore, AnalystScore.analyst_id == Analyst.id)
-         .order_by(AnalystScore.score.desc()))
+         .options(joinedload(Analyst.broker)).order_by(AnalystScore.score.desc()))
     rows = []
     for a, s in q.all():
         b = s.bias or {}
