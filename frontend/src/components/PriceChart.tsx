@@ -33,12 +33,16 @@ export function PriceChart({ prices, calls, range }: { prices: { time: string; v
     });
     series.setData(prices.map((p) => ({ time: p.time as Time, value: p.value })));
 
-    // snap each call to the first trading day on/after its report date
+    // snap each call to the first trading day on/after its report date.
+    // Returns undefined when no price data exists on or after the report date
+    // (the call is beyond the available history), so such calls are excluded
+    // rather than incorrectly pinned to the last chart date.
     const days = prices.map((p) => p.time);
-    const snap = (d: string) => days.find((t) => t >= d) ?? days[days.length - 1];
+    const snap = (d: string): string | undefined => days.find((t) => t >= d);
     const byDay = new Map<string, Rec[]>();
     calls.forEach((c) => {
       const t = snap(c.report_date);
+      if (t === undefined) return;   // skip calls beyond the price history range
       byDay.set(t, [...(byDay.get(t) ?? []), c]);
     });
     series.setMarkers(

@@ -24,11 +24,12 @@ def _overshoot(g: pd.DataFrame) -> float | None:
 
 def compute_bias(df: pd.DataFrame) -> tuple[dict[int, dict], dict]:
     share = df["rating"].value_counts(normalize=True) * 100
+    market_overshoot = _overshoot(df)   # None when no evaluated BUY calls with targets exist
     market = {
         "buy_share": round(float(share.get("BUY", 0)), 2),
         "hold_share": round(float(share.get("HOLD", 0)), 2),
         "sell_share": round(float(share.get("SELL", 0)), 2),
-        "tp_overshoot": round(_overshoot(df) or 0.0, 2),
+        "tp_overshoot": None if market_overshoot is None else round(market_overshoot, 2),
     }
     market["buy_to_sell"] = round(market["buy_share"] / market["sell_share"], 2) if market["sell_share"] else None
 
@@ -47,7 +48,10 @@ def compute_bias(df: pd.DataFrame) -> tuple[dict[int, dict], dict]:
             flags.append("Optimism bias")
         if b["sell_share"] < market["sell_share"] * BIAS_SELL_RATIO:
             flags.append("Sell avoidance")
-        if b["tp_overshoot"] is not None and b["tp_overshoot"] > market["tp_overshoot"] + BIAS_TP_EXCESS_PTS:
+        # Only flag "Inflated targets" when the market benchmark is actually available.
+        # Comparing against 0.0 (a false default) would produce misleading flags.
+        if (b["tp_overshoot"] is not None and market_overshoot is not None
+                and b["tp_overshoot"] > market_overshoot + BIAS_TP_EXCESS_PTS):
             flags.append("Inflated targets")
         b["flags"] = flags
         per[int(aid)] = b

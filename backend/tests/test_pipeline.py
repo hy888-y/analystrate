@@ -161,6 +161,74 @@ def test_stock_brokers_exports_feedback(app):
     assert "not a stock recommender" in s["disclaimer"] and "financial advice" in s["disclaimer"]
 
 
+# ---- search endpoints ----
+
+def test_search_analysts_endpoint(app):
+    """GET /search/analysts?q= must return a list of analyst objects."""
+    c = app.test_client()
+    r = c.get("/api/search/analysts?q=Analyst").get_json()
+    assert isinstance(r, list)
+    if r:
+        assert {"id", "name", "broker", "grade"} <= set(r[0])
+
+def test_search_stocks_endpoint(app):
+    """GET /search/stocks?q= must return a list of stock objects."""
+    c = app.test_client()
+    r = c.get("/api/search/stocks?q=Fixture").get_json()
+    assert isinstance(r, list)
+    if r:
+        assert {"code", "name"} <= set(r[0])
+
+def test_search_short_query_returns_empty(app):
+    """Queries shorter than 2 characters must return empty lists."""
+    c = app.test_client()
+    assert c.get("/api/search/analysts?q=A").get_json() == []
+    assert c.get("/api/search/stocks?q=F").get_json() == []
+
+def test_search_no_results(app):
+    """Query that matches nothing must return an empty list, not an error."""
+    c = app.test_client()
+    assert c.get("/api/search/analysts?q=ZZZNOMATCH").get_json() == []
+    assert c.get("/api/search/stocks?q=ZZZNOMATCH").get_json() == []
+
+
+# ---- bias tp_overshoot benchmark ----
+
+def test_tp_overshoot_none_when_no_evaluated_buys():
+    """compute_bias must return market tp_overshoot=None when no data, not 0.0."""
+    from app.modules.bias import compute_bias
+    df = pd.DataFrame([
+        {"analyst_id": 1, "rating": "BUY", "status": "in_window", "target_price": 1.1,
+         "price_12m": None, "hit": None},
+    ])
+    _, market = compute_bias(df)
+    assert market["tp_overshoot"] is None
+
+def test_tp_overshoot_no_false_flag_when_market_unavailable():
+    """Analysts must NOT be flagged for 'Inflated targets' when the market benchmark is None."""
+    from app.modules.bias import compute_bias
+    from app.config import BIAS_TP_EXCESS_PTS
+    df = pd.DataFrame([
+        # analyst 1 has a high overshoot on an evaluated BUY; market has no evaluated BUYs from analyst 2
+        {"analyst_id": 1, "rating": "BUY", "status": "evaluated", "target_price": 2.0,
+         "price_12m": 1.0, "hit": False},
+        {"analyst_id": 2, "rating": "HOLD", "status": "in_window", "target_price": None,
+         "price_12m": None, "hit": None},
+    ])
+    per, market = compute_bias(df)
+    # The market has an evaluated BUY here (analyst 1), so benchmark should exist
+    # The flag should only appear when analyst overshoot exceeds market + threshold
+    assert market["tp_overshoot"] is not None
+    # Now test with truly empty market benchmark
+    df2 = pd.DataFrame([
+        {"analyst_id": 1, "rating": "BUY", "status": "in_window", "target_price": 5.0,
+         "price_12m": None, "hit": None},
+    ])
+    per2, market2 = compute_bias(df2)
+    assert market2["tp_overshoot"] is None
+    assert "Inflated targets" not in per2[1]["flags"]
+
+
 # ---- point-in-time fix regression tests ----
 
 def _minimal_df(n_analysts=2, n_calls=6, seed=42):

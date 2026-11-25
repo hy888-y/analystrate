@@ -104,6 +104,30 @@ function Feedback() {
   const [rating, setRating] = useState<number | null>(null);
   const [text, setText] = useState('');
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSend = async () => {
+    if (!rating) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clarity: rating, comment: text || undefined, page: 'general' }),
+      });
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
+      setSent(true);
+      setOpen(false);
+      setRating(null);
+      setText('');
+    } catch {
+      setError('Could not send feedback. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (sent) return (
     <button className="btn pri fbbtn" onClick={() => setSent(false)} style={{ padding: '9px 15px' }}>
@@ -123,8 +147,12 @@ function Feedback() {
             ))}
           </div>
           <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Any comments? (optional)" />
+          {error && <p style={{ color: 'var(--red, #e53)', fontSize: 12, margin: '4px 0 0' }}>{error}</p>}
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="btn pri" style={{ flex: 1 }} onClick={() => { setSent(true); setOpen(false); }}>Send</button>
+            <button className="btn pri" style={{ flex: 1 }} onClick={handleSend}
+              disabled={!rating || submitting}>
+              {submitting ? 'Sending…' : 'Send'}
+            </button>
             <button className="btn" onClick={() => setOpen(false)}>Cancel</button>
           </div>
         </div>

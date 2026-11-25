@@ -176,6 +176,31 @@ def search():
     })
 
 
+@api.get("/search/analysts")
+def search_analysts():
+    """Split search endpoint used by the frontend Shell search box."""
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    an = (db.session.query(Analyst, AnalystScore).join(Broker).options(joinedload(Analyst.broker))
+          .outerjoin(AnalystScore, AnalystScore.analyst_id == Analyst.id)
+          .filter(or_(Analyst.name.ilike(f"%{q}%"), Broker.name.ilike(f"%{q}%")))
+          .order_by(AnalystScore.score.desc().nullslast()).limit(6).all())
+    return jsonify([{"id": a.id, "name": a.name, "broker": a.broker.name, "grade": sc.grade if sc else "N"}
+                    for a, sc in an])
+
+
+@api.get("/search/stocks")
+def search_stocks():
+    """Split search endpoint used by the frontend Shell search box."""
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    st = (Stock.query.filter(or_(Stock.name.ilike(f"%{q}%"), Stock.code.ilike(f"{q}%")))
+          .order_by(Stock.name).limit(6).all())
+    return jsonify([{"code": x.code, "name": x.name, "sector": x.sector} for x in st])
+
+
 @api.get("/brokers")
 def brokers():
     """Institution-level view (IR Table 3: broker 'used for institution-level analysis')."""
