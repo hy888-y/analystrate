@@ -48,7 +48,7 @@ def run_all(as_of: date | None = None) -> dict:
     bias, market_bias = compute_bias(df)   # Module 2
     df = compute_risk(df)                  # Module 3
     parts = breakdowns(df, sector_of)
-    print("validating (model comparison, out-of-sample tests) ...")
+    print("validating (out-of-sample confidence, bias and risk tests) ...")
     validation = run_validation(df)                                             # CRISP-DM Evaluation
 
     # ---- write back ----
