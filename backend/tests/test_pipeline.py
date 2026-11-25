@@ -259,6 +259,124 @@ def test_fix_c_same_day_peers_excluded():
     assert int(out.loc[1, "peer_n"] or 0) == 0
 
 
+# ---- _pit_percentile same-date and future-data regression tests ----
+
+def test_pit_percentile_same_date_excluded_from_peer_pool():
+    """Same-date recommendations must not influence each other's percentile rank."""
+    from app.modules.risk import _pit_percentile
+    # Three calls on the same day with different volatilities.
+    # Each call's pool = prior calls (none here) + itself, so all three get 100th percentile.
+    vals = pd.Series([0.1, 0.5, 0.9])
+    dts = pd.Series(["2022-01-01", "2022-01-01", "2022-01-01"])
+    result = _pit_percentile(vals, dts)
+    # Without same-date peers each call compares only against itself → all 100.0
+    assert list(result) == pytest.approx([100.0, 100.0, 100.0])
+
+
+def test_pit_percentile_future_calls_cannot_change_historical_score():
+    """Adding a future call must not alter the percentile rank of an earlier call."""
+    from app.modules.risk import _pit_percentile
+    vals_base = pd.Series([0.2, 0.4])
+    dts_base = pd.Series(["2022-01-01", "2022-06-01"])
+    result_base = _pit_percentile(vals_base, dts_base)
+
+    # Add a call far in the future with an extreme value
+    vals_ext = pd.Series([0.2, 0.4, 0.99])
+    dts_ext = pd.Series(["2022-01-01", "2022-06-01", "2025-01-01"])
+    result_ext = _pit_percentile(vals_ext, dts_ext)
+
+    # The first two calls' percentiles must be identical with or without the future call
+    assert result_base[0] == pytest.approx(result_ext[0])
+    assert result_base[1] == pytest.approx(result_ext[1])
+
+
+def test_risk_score_unchanged_by_future_calls():
+    """compute_risk() result for earlier calls must not change when future calls are appended."""
+    from app.modules.risk import compute_risk
+    df = _minimal_df(n_calls=4)
+    df["confidence_score"] = 60.0
+    df["peer_n"] = 0
+    df["peer_share"] = 0.5
+    df["peer_view"] = None
+    df = df.drop(columns=["confidence_score"], errors="ignore")
+    df["confidence_score"] = 60.0
+
+    out_base = compute_risk(df.copy())
+
+    # Append two calls dated far in the future
+    future = df.iloc[:2].copy()
+    future["id"] = [999, 998]
+    future["report_date"] = [date(2030, 1, 1), date(2030, 6, 1)]
+    future["eval_end_date"] = [date(2031, 1, 1), date(2031, 6, 1)]
+    df_ext = pd.concat([df, future], ignore_index=True)
+    out_ext = compute_risk(df_ext)
+
+    orig_ids = set(df["id"])
+    for rid in orig_ids:
+        s_base = out_base.loc[out_base["id"] == rid, "risk_score"].iloc[0]
+        s_ext = out_ext.loc[out_ext["id"] == rid, "risk_score"].iloc[0]
+        assert s_base == pytest.approx(s_ext, abs=1e-6), f"risk_score changed for id={rid}"
+
+
+def test_confidence_experience_unchanged_by_future_calls():
+    """call_level_scores() experience factor must not change when future calls are appended."""
+    from app.modules.confidence import call_level_scores
+    df = _minimal_df(n_analysts=2, n_calls=6)
+    df = df.drop(columns=["confidence_score"], errors="ignore")
+    df["sector"] = "Technology"
+    df["consensus_agree"] = None
+    df["peer_n"] = 0
+    df["peer_share"] = 0.5
+    df["peer_view"] = None
+    sector_of = {1: "Technology"}
+
+    out_base = call_level_scores(df.copy(), sector_of)
+
+    future = df.iloc[:2].copy()
+    future["id"] = [997, 996]
+    future["report_date"] = [date(2030, 1, 1), date(2030, 6, 1)]
+    future["eval_end_date"] = [date(2031, 1, 1), date(2031, 6, 1)]
+    df_ext = pd.concat([df, future], ignore_index=True)
+    out_ext = call_level_scores(df_ext, sector_of)
+
+    orig_ids = set(df["id"])
+    for rid in orig_ids:
+        exp_base = out_base.loc[out_base["id"] == rid, "confidence_factors"].iloc[0]["values"]["experience"]
+        exp_ext = out_ext.loc[out_ext["id"] == rid, "confidence_factors"].iloc[0]["values"]["experience"]
+        assert exp_base == pytest.approx(exp_ext, abs=1e-6), f"experience changed for id={rid}"
+
+
+def test_earlier_calls_eligible_for_consensus():
+    """A call published before another must appear as that later call's backward-looking peer."""
+    from pipeline.outcomes import add_consensus
+    d_early = date(2022, 1, 1)
+    d_late = date(2022, 3, 1)   # 59 days later — within the 90-day window
+    df = pd.DataFrame([
+        {"id": 1, "analyst_id": 1, "stock_id": 1, "report_date": d_early, "rating": "BUY",
+         "target_price": 1.1, "entry_price": 1.0, "price_12m": 1.05,
+         "status": "evaluated", "hit": True, "eval_end_date": d_early + timedelta(days=365)},
+        {"id": 2, "analyst_id": 2, "stock_id": 1, "report_date": d_late, "rating": "BUY",
+         "target_price": 1.1, "entry_price": 1.0, "price_12m": 1.05,
+         "status": "evaluated", "hit": True, "eval_end_date": d_late + timedelta(days=365)},
+    ])
+    out = add_consensus(df)
+    # The later call (id=2) must see the earlier call as a peer
+    later = out[out["id"] == 2].iloc[0]
+    assert int(later["peer_n"] or 0) == 1
+    assert float(later["peer_share"]) == pytest.approx(1.0)   # both BUY
+
+
+def test_scoring_weights_unchanged():
+    """Scoring weights must remain exactly as approved in config."""
+    from app.config import WEIGHTS, RISK_WEIGHTS
+    expected_weights = {"success": 0.30, "tp_accuracy": 0.25, "experience": 0.15, "sector": 0.15, "consensus": 0.15}
+    expected_risk = {"track": 0.30, "volatility": 0.25, "implied_move": 0.15, "confidence": 0.15, "alignment": 0.15}
+    assert WEIGHTS == expected_weights
+    assert RISK_WEIGHTS == expected_risk
+    assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+    assert abs(sum(RISK_WEIGHTS.values()) - 1.0) < 1e-9
+
+
 def test_analyst_is_one_person_across_brokers(tmp_path):
     """IR Table 3: the analyst (a person) is the unit of evaluation, even after moving broker."""
     app = create_app({"SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / 'p.db'}", "TESTING": True})

@@ -72,19 +72,28 @@ def point_in_time_track(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pit_percentile(series: pd.Series, dates: pd.Series) -> pd.Series:
-    """Percentile rank of each value against only rows whose report_date is on or before
-    its own date — no future information used (IR 2.2.3 point-in-time requirement)."""
+    """Percentile rank of each value against earlier recommendations plus itself.
+
+    The pool for a recommendation on date d contains:
+      - all recommendations with report_date < d  (strictly before)
+      - the recommendation itself
+
+    Same-date peers are excluded because publication timestamps within a day
+    are unavailable, so we cannot determine ordering among them.
+    This satisfies IR 2.2.3 (no future information) while keeping the
+    self-inclusion needed for a well-defined percentile on the first call.
+    """
     vals = series.to_numpy(dtype=float)
     dts = pd.to_datetime(dates).to_numpy().astype("datetime64[D]")
     result = np.full(len(vals), np.nan)
     for d in np.unique(dts):
-        pool = vals[dts <= d]
-        pool_valid = pool[~np.isnan(pool)]
-        if not len(pool_valid):
-            continue
+        # pool = strictly-earlier rows + the rows on date d themselves
+        prior_valid = vals[dts < d]
+        prior_valid = prior_valid[~np.isnan(prior_valid)]
         for i in np.where(dts == d)[0]:
             if not np.isnan(vals[i]):
-                result[i] = 100.0 * float(np.mean(pool_valid <= vals[i]))
+                pool = np.append(prior_valid, vals[i])
+                result[i] = 100.0 * float(np.mean(pool <= vals[i]))
     return pd.Series(result, index=series.index)
 
 

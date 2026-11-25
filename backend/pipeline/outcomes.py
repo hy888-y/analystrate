@@ -100,8 +100,9 @@ def add_consensus(df: pd.DataFrame) -> pd.DataFrame:
     consensus_tp_error: |P12 - mean peer target| / P0 (omerdr/stocks relative accuracy, r_c).
 
     Point-in-time version (used by the per-call trust score and the risk meter, so nothing from the
-    future is used): only peers whose call was published in the CONSENSUS_WINDOW_DAYS *before* this
-    call (same day included), keeping each peer analyst's latest view.
+    future is used): only peers whose call was published in the CONSENSUS_WINDOW_DAYS *strictly before*
+    this call (same-day peers excluded, as publication timestamps within a day are unavailable),
+    keeping each peer analyst's latest view.
       peer_n      number of other analysts with a view on the stock at the call date
       peer_share  share of them holding the same rating as this call (0-1)
       peer_view   the peers' most common rating"""
