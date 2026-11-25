@@ -22,7 +22,7 @@ import pandas as pd
 
 from app.config import MIN_HISTORY_FOR_MODELS, RISK_LEVELS, SHRINK_K, THIN_SAMPLE, VALIDATION_SPLIT, WEIGHTS
 
-FEATURES = list(WEIGHTS)        # success, tp_accuracy, experience, sector, consensus
+FEATURES = list(WEIGHTS)        # success, tp_accuracy, sector, consensus
 
 
 def _r(x, n=4):
@@ -163,7 +163,7 @@ def risk_test(ev, test):
 
 # ------------------------------------------------------------------------------------------------
 def lime_test(ev, train, test, model, n_cases=150, n_samples=600, seed=0):
-    """Ribeiro et al. (2016) LIME, implemented directly: perturb one call's five factors, ask the black
+    """Ribeiro et al. (2016) LIME, implemented directly: perturb one call's four factors, ask the black
     box for predictions, weight samples by closeness, fit a weighted linear model. Compared with the
     transparent score, whose breakdown is exact by construction."""
     from sklearn.linear_model import Ridge

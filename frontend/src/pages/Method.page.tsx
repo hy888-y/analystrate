@@ -63,7 +63,7 @@ export function MethodPage() {
           </tbody></table></div>
           <div className="pad mini">
             <p><b>Analyst score</b>: the factors over all of an analyst's scored calls; small records are shrunk toward the market rate. Grades: top 20% A, next 30% B, next 30% C, bottom 20% D.</p>
-            <p><b>Trust score of each call</b>: the same five factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts' views in the previous 90 days).</p>
+            <p><b>Trust score of each call</b>: the same four factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts' views in the previous 90 days).</p>
           </div>
         </section>
 
@@ -117,7 +117,7 @@ export function MethodPage() {
 
           <div className="cols2">
             <section className="panel">
-              <div className="ptitle">Model comparison <span>same five factors · {v.model_calls?.n_test.toLocaleString()} test calls with history</span></div>
+              <div className="ptitle">Model comparison <span>same four factors · {v.model_calls?.n_test.toLocaleString()} test calls with history</span></div>
               <div className="tbl"><table className="wrap">
                 <thead><tr><th>MODEL</th><th>AUC</th><th>ACCURACY</th><th>BRIER</th><th>EXPLAINABLE TO AN INVESTOR</th></tr></thead>
                 <tbody>

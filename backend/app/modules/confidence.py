@@ -100,7 +100,7 @@ def explain(factors: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------------------------
-# Call level: the "recommendation trust score" of IR Objective 3. Same five factors and weights
+# Call level: the "recommendation trust score" of IR Objective 3. Same four factors and weights
 # as the analyst score, but every factor is measured only from information that existed on the
 # call date (calls whose 12-month window had already closed, and peer calls already published),
 # so the score shown on a call is exactly what an investor could have known when reading it.
