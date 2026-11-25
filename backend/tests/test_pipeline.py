@@ -122,16 +122,16 @@ def test_end_to_end(app):
     assert recs["total"] > 10
     r = recs["items"][0]
     assert r["risk_level"] in {"Low", "Moderate", "Elevated", "High"}
-    assert set(r["risk"]["components"]) == {"track", "volatility", "implied_move", "confidence", "alignment"}
+    assert set(r["risk"]["components"]) == {"track", "volatility", "confidence"}
 
     # Objective 3: every call carries its own trust score, explained factor by factor
-    assert r["confidence_score"] is not None and len(r["confidence"]) == 5
+    assert r["confidence_score"] is not None and len(r["confidence"]) == 4
     assert sum(f["points"] for f in r["confidence"]) == pytest.approx(r["confidence_score"], abs=0.05)
     assert all(f["evidence"] for f in r["confidence"])
 
     m = c.get("/api/meta").get_json()
     v = m["validation"]
-    assert len(m["weights"]) == 5 and "logit_auc" in v
+    assert len(m["weights"]) == 4 and "logit_auc" in v
     assert {x["key"] for x in v["model_comparison"]} == {"weighted", "logit", "rf", "gb"}
     assert [x["factor"] for x in v["weights_vs_coef"]] == list(WEIGHTS)
     assert v["lime_test"]["transparent_fidelity_r2"] == 1.0 and v["min_calls"]["rows"]
@@ -287,11 +287,10 @@ def test_fix_a_no_future_outcomes_in_market_baseline():
         assert row["prior_hit_rate"] == pytest.approx(expected, abs=1e-9)
 
 
-def test_fix_b_ref_n_is_point_in_time():
-    """Fix B: ref_n for experience factor must only use analyst counts resolved before report_date."""
+def test_fix_b_resolved_calls_evidence_is_point_in_time():
+    """resolved_calls in evidence must only count analyst calls resolved before report_date (no look-ahead)."""
     from app.modules.confidence import call_level_scores
     df = _minimal_df(n_analysts=3, n_calls=12)
-    # drop columns call_level_scores will produce itself to avoid join collision
     df = df.drop(columns=["confidence_score"], errors="ignore")
     df["sector"] = "Technology"
     df["consensus_agree"] = None
@@ -302,10 +301,10 @@ def test_fix_b_ref_n_is_point_in_time():
     out = call_level_scores(df, sector_of)
     # All calls must have a confidence_score computed (no crash / NaN)
     assert out["confidence_score"].notna().all()
-    # Experience factor for the very first call must be 0 (no prior resolved calls)
+    # The very first call must have resolved_calls == 0 (no prior evaluated calls exist)
     first_i = out.sort_values("report_date").index[0]
     factors = out.loc[first_i, "confidence_factors"]
-    assert factors["values"]["experience"] == pytest.approx(0.0)
+    assert factors["evidence"]["resolved_calls"] == 0
 
 
 def test_fix_c_same_day_peers_excluded():
@@ -386,8 +385,8 @@ def test_risk_score_unchanged_by_future_calls():
         assert s_base == pytest.approx(s_ext, abs=1e-6), f"risk_score changed for id={rid}"
 
 
-def test_confidence_experience_unchanged_by_future_calls():
-    """call_level_scores() experience factor must not change when future calls are appended."""
+def test_confidence_score_unchanged_by_future_calls():
+    """call_level_scores() confidence_score must not change when future calls are appended."""
     from app.modules.confidence import call_level_scores
     df = _minimal_df(n_analysts=2, n_calls=6)
     df = df.drop(columns=["confidence_score"], errors="ignore")
@@ -409,9 +408,9 @@ def test_confidence_experience_unchanged_by_future_calls():
 
     orig_ids = set(df["id"])
     for rid in orig_ids:
-        exp_base = out_base.loc[out_base["id"] == rid, "confidence_factors"].iloc[0]["values"]["experience"]
-        exp_ext = out_ext.loc[out_ext["id"] == rid, "confidence_factors"].iloc[0]["values"]["experience"]
-        assert exp_base == pytest.approx(exp_ext, abs=1e-6), f"experience changed for id={rid}"
+        s_base = out_base.loc[out_base["id"] == rid, "confidence_score"].iloc[0]
+        s_ext = out_ext.loc[out_ext["id"] == rid, "confidence_score"].iloc[0]
+        assert s_base == pytest.approx(s_ext, abs=1e-6), f"confidence_score changed for id={rid}"
 
 
 def test_earlier_calls_eligible_for_consensus():
@@ -435,14 +434,39 @@ def test_earlier_calls_eligible_for_consensus():
 
 
 def test_scoring_weights_unchanged():
-    """Scoring weights must remain exactly as approved in config."""
+    """Scoring weights must remain exactly as approved in proposal: 4 factors at 25% each."""
     from app.config import WEIGHTS, RISK_WEIGHTS
-    expected_weights = {"success": 0.30, "tp_accuracy": 0.25, "experience": 0.15, "sector": 0.15, "consensus": 0.15}
-    expected_risk = {"track": 0.30, "volatility": 0.25, "implied_move": 0.15, "confidence": 0.15, "alignment": 0.15}
+    _THIRD = 1.0 / 3.0
+    expected_weights = {"success": 0.25, "tp_accuracy": 0.25, "sector": 0.25, "consensus": 0.25}
+    expected_risk = {"track": _THIRD, "volatility": _THIRD, "confidence": _THIRD}
     assert WEIGHTS == expected_weights
-    assert RISK_WEIGHTS == expected_risk
+    assert RISK_WEIGHTS == pytest.approx(expected_risk)
     assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
     assert abs(sum(RISK_WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_experience_not_in_confidence_score():
+    """Experience depth must not be a scoring factor (proposal: 4 factors only)."""
+    from app.config import WEIGHTS
+    assert "experience" not in WEIGHTS
+
+
+def test_risk_has_exactly_three_components():
+    """Risk meter must have exactly three components (proposal: track, volatility, confidence)."""
+    from app.config import RISK_WEIGHTS
+    assert set(RISK_WEIGHTS.keys()) == {"track", "volatility", "confidence"}
+
+
+def test_implied_move_not_in_risk_components():
+    """implied_move must not be a risk component (removed per proposal)."""
+    from app.config import RISK_WEIGHTS
+    assert "implied_move" not in RISK_WEIGHTS
+
+
+def test_alignment_not_in_risk_components():
+    """alignment must not be a risk component (removed per proposal)."""
+    from app.config import RISK_WEIGHTS
+    assert "alignment" not in RISK_WEIGHTS
 
 
 def _snap(date_str: str, price_days: list) -> "str | None":

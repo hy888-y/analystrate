@@ -32,22 +32,22 @@ EVAL_MONTHS = 12            # 12-month target-price horizon used by Malaysian br
 HOLD_BAND = 0.10            # HOLD is a hit if |12m return| <= 10%
 PRICE_MATCH_DAYS = 7        # nearest trading day must be within 7 calendar days
 
-# ---------- Explainable Confidence Score (IR 2.2.4 / 2.2.5) ----------
+# ---------- Explainable Confidence Score (Proposal Section 3: four equal factors) ----------
 # Transparent weighted-factor model. Weights sum to 1.0.
 # Part 2 evaluation compares these against logistic-regression coefficients (pipeline/validate.py).
+# Experience depth is tracked as metadata (thin_sample flag, n_evaluated) but does NOT
+# independently contribute to the score per the approved FYP proposal.
 WEIGHTS = {
-    "success": 0.30,      # historical success rate (shrunk toward market mean)
-    "tp_accuracy": 0.25,  # target price accuracy
-    "experience": 0.15,   # depth of evaluated track record
-    "sector": 0.15,       # success inside the analyst's main sector
-    "consensus": 0.15,    # agreement with peers on the same stock
+    "success":     0.25,  # historical recommendation outcome performance
+    "tp_accuracy": 0.25,  # target price realism vs actual 12-month outcome
+    "sector":      0.25,  # analyst's performance in the relevant sector
+    "consensus":   0.25,  # consistency with peer analyst views (proxy for market sentiment)
 }
 FACTOR_LABELS = {
-    "success": ("Historical success rate", "Share of evaluated calls that played out as stated"),
-    "tp_accuracy": ("Target price accuracy", "How close targets landed to the 12-month price"),
-    "experience": ("Experience depth", "Number of evaluated calls (log-scaled)"),
-    "sector": ("Sector consistency", "Hit rate inside the analyst's main sector"),
-    "consensus": ("Consensus consistency", "Agreement with other analysts on the same stock"),
+    "success":     ("Historical success rate",      "Share of evaluated calls that played out as stated"),
+    "tp_accuracy": ("Target price realism",         "How close targets landed to the 12-month price"),
+    "sector":      ("Sector expertise alignment",   "Hit rate inside the analyst's main sector"),
+    "consensus":   ("Market sentiment consistency", "Consistency with peer analyst views on the same stock (proxy for market sentiment)"),
 }
 SHRINK_K = 20               # Bayesian shrinkage: a thin record is pulled toward the market hit rate
 THIN_SAMPLE = 30            # fewer evaluated calls than this -> "thin sample" tag
@@ -58,10 +58,11 @@ BIAS_BUY_EXCESS_PTS = 10.0       # buy share > market + 10 pts -> optimism bias
 BIAS_SELL_RATIO = 0.5            # sell share < 50% of market -> sell avoidance
 BIAS_TP_EXCESS_PTS = 8.0         # BUY target overshoot > market + 8 pts -> inflated targets
 
-# ---------- Recommendation Risk Meter (IR 2.2.3) ----------
-# IR 2.2.3: stock-specific track record, price volatility and score alignment, plus the size of the
-# promised move and the call's own trust score. Weights sum to 1.0.
-RISK_WEIGHTS = {"track": 0.30, "volatility": 0.25, "implied_move": 0.15, "confidence": 0.15, "alignment": 0.15}
+# ---------- Recommendation Risk Meter (Proposal Section 4: three equal components) ----------
+# Stock-specific track record, price volatility, and confidence score alignment. Weights sum to 1.0.
+# Implied-move and independent consensus-alignment components removed per approved proposal.
+_THIRD = 1.0 / 3.0
+RISK_WEIGHTS = {"track": _THIRD, "volatility": _THIRD, "confidence": _THIRD}
 RISK_LEVELS = [(35, "Low"), (50, "Moderate"), (65, "Elevated"), (101, "High")]
 VOL_LOOKBACK_DAYS = 252     # trailing trading days used for volatility at the call date
 MIN_STOCK_TRACK = 3         # need >=3 earlier evaluated calls on the stock to use stock-level record

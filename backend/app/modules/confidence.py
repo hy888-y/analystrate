@@ -1,9 +1,15 @@
-"""Module 1 - Explainable Confidence Score (IR 2.2.4, 2.2.5).
+"""Module 1 - Explainable Confidence Score (Proposal Section 3).
 
-score = sum(weight_f * factor_f), every factor on a 0-100 scale, so each score can be
-shown on the website as "factor value x weight = points" with no approximation.
-Thin records are shrunk toward the market rate (Bayesian average, k = SHRINK_K), which
-answers IR 4.3's question of how to rate analysts with few calls fairly.
+Four equal-weight factors (25% each), all on a 0-100 scale:
+  success     — historical recommendation outcome performance
+  tp_accuracy — target price realism vs actual 12-month outcome
+  sector      — analyst's performance in the relevant sector
+  consensus   — consistency with peer analyst views (proxy for market sentiment)
+
+Experience depth (number of evaluated calls) is NOT a scoring factor per the approved
+proposal; it is tracked as supporting metadata (thin_sample flag, n_evaluated field,
+and resolved_calls in the per-call evidence).  Thin records are shrunk toward the market
+rate (Bayesian average, k = SHRINK_K) to prevent misleading scores on few calls.
 """
 from __future__ import annotations
 
@@ -26,9 +32,6 @@ def compute_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> tuple[
     market_agree = float(agree.mean()) if len(agree) else 0.5
     tp_err = ev["tp_error"].dropna().astype(float)
     market_tp_acc = float(100 * (1 - min(1.0, tp_err.mean()))) if len(tp_err) else 50.0
-
-    n_eval = ev.groupby("analyst_id").size()
-    ref_n = float(np.percentile(n_eval, 95)) if len(n_eval) else 1.0
 
     df = df.assign(sector=df["stock_id"].map(sector_of).fillna("Unclassified"))
     ev = ev.assign(sector=ev["stock_id"].map(sector_of).fillna("Unclassified"))
@@ -53,12 +56,12 @@ def compute_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> tuple[
         rel = (float(errs.loc[both].mean() / c_err.loc[both].mean())
                if len(both) and c_err.loc[both].mean() > 0 else None)
 
+        # Four approved factors only (experience excluded from score per proposal).
         f = {
-            "success": 100 * shrunk_rate(hits, n, market_hit),
+            "success":     100 * shrunk_rate(hits, n, market_hit),
             "tp_accuracy": tp_acc,
-            "experience": 100 * min(1.0, np.log1p(n) / np.log1p(ref_n)) if ref_n > 0 else 0.0,
-            "sector": 100 * shrunk_rate(int(es["hit"].sum()), len(es), market_hit),
-            "consensus": 100 * shrunk_rate(int(ag.sum()), len(ag), market_agree),
+            "sector":      100 * shrunk_rate(int(es["hit"].sum()), len(es), market_hit),
+            "consensus":   100 * shrunk_rate(int(ag.sum()), len(ag), market_agree),
         }
         f = {k: round(float(v), 2) for k, v in f.items()}
         rows.append({
@@ -83,8 +86,7 @@ def compute_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> tuple[
     ]
     market = {"hit_rate": round(100 * market_hit, 2), "consensus_agree": round(100 * market_agree, 2),
               "n_evaluated": int(len(ev)),
-              "tp_accuracy": round(market_tp_acc, 2), "grade_cutoffs": {"A": q80, "B": q50, "C": q20},
-              "experience_ref_calls": ref_n}
+              "tp_accuracy": round(market_tp_acc, 2), "grade_cutoffs": {"A": q80, "B": q50, "C": q20}}
     return out, market
 
 
@@ -106,9 +108,10 @@ def explain(factors: dict) -> list[dict]:
 def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> pd.DataFrame:
     """Adds confidence_score (0-100) and confidence_factors (dict) to every call.
 
-    ref_n (95th-percentile analyst experience) is computed point-in-time: for each
-    recommendation date only the counts of previously-resolved analyst records are used,
-    so no future call volume enters the experience normaliser.
+    Four equal-weight factors (25% each). Experience depth is NOT a scoring factor;
+    it appears only in the evidence dict as resolved_calls (supporting metadata).
+    All factor values are computed point-in-time: only information available on the
+    call date is used, preventing look-ahead bias.
     """
     out = df.copy()
     out["sector"] = out["stock_id"].map(sector_of).fillna("Unclassified")
@@ -124,27 +127,11 @@ def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> pd.
     m_err_sum = np.concatenate([[0.0], err.fillna(0).cumsum().to_numpy()])
     m_err_n = np.concatenate([[0], err.notna().astype(int).cumsum().to_numpy()])
 
-    # For point-in-time ref_n: sorted market eval_end_dates and per-analyst resolved counts
-    _mk_ends_sorted = m_end.copy()
-    _mk_analyst = mk["analyst_id"].to_numpy()
-
     def market_at(d):
         k = int(np.searchsorted(m_end, d, "left"))
         hit = m_hits[k] / k if k else 0.5
         e = m_err_sum[k] / m_err_n[k] if m_err_n[k] else 0.5
         return hit, e
-
-    def ref_n_at(d) -> float:
-        """95th-percentile of per-analyst resolved-call counts, using only calls resolved before d."""
-        k = int(np.searchsorted(_mk_ends_sorted, d, "left"))
-        if k == 0:
-            return 1.0
-        analysts_before = _mk_analyst[:k]
-        counts = np.bincount(analysts_before.astype(int))
-        counts_nonzero = counts[counts > 0]
-        if len(counts_nonzero) == 0:
-            return 1.0
-        return float(np.percentile(counts_nonzero, 95))
 
     scores, factors = [], []
     idx = []
@@ -158,19 +145,18 @@ def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> pd.
             d = np.datetime64(pd.Timestamp(r["report_date"]))
             k = int(np.searchsorted(ends, d, "left"))            # own calls already resolved
             m_hit, m_err = market_at(d)
-            ref_n = ref_n_at(d)
             h = int(hits[:k].sum())
             ek = errs[:k][~np.isnan(errs[:k])]
             same = secs[:k] == r["sector"]
             sn, sh = int(same.sum()), int(hits[:k][same].sum())
             pn = r.get("peer_n")
             pn = 0 if pn is None or pd.isna(pn) else int(pn)
+            # Four approved factors only; experience (k) stored in evidence as metadata.
             f = {
-                "success": 100 * shrunk_rate(h, k, m_hit),
+                "success":     100 * shrunk_rate(h, k, m_hit),
                 "tp_accuracy": 100 * (1 - min(1.0, (ek.sum() + SHRINK_K * m_err) / (len(ek) + SHRINK_K))),
-                "experience": 100 * min(1.0, np.log1p(k) / np.log1p(ref_n)) if ref_n > 0 else 0.0,
-                "sector": 100 * shrunk_rate(sh, sn, m_hit),
-                "consensus": 100 * float(r["peer_share"]) if pn else 50.0,
+                "sector":      100 * shrunk_rate(sh, sn, m_hit),
+                "consensus":   100 * float(r["peer_share"]) if pn else 50.0,
             }
             f = {k2: round(float(v), 2) for k2, v in f.items()}
             idx.append(i)
@@ -194,7 +180,6 @@ def explain_call(cf: dict | None) -> list[dict]:
     why = {
         "success": f"{ev['resolved_hits']} of {ev['resolved_calls']} earlier calls had played out by this date",
         "tp_accuracy": f"based on {ev['tp_errors']} earlier targets that had reached their 12-month date",
-        "experience": f"{ev['resolved_calls']} earlier calls already scored",
         "sector": f"{ev['sector_hits']} of {ev['sector_calls']} earlier calls in {ev['sector']} played out",
         "consensus": (f"{ev['peers']} other analysts had a view; most said {ev['peer_view']}"
                       if ev["peers"] else "no other analyst had a view in the previous 90 days"),

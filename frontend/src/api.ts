@@ -61,17 +61,16 @@ export interface AnalystDetail extends AnalystRow {
 }
 
 export interface RiskInfo {
-  components: { track: number; volatility: number | null; implied_move: number | null; confidence: number | null; alignment: number };
+  components: { track: number; volatility: number | null; confidence: number | null };
   weights_used: Record<string, number>;
   prior_hit_rate: number;
   prior_n: number;
   prior_scope: 'stock' | 'analyst' | 'market';
   volatility_annual: number | null;
-  implied_move_pct: number | null;
   confidence_score: number | null;
-  peers: number;
-  peer_view: Rating | null;
-  peer_share: number | null;
+  peers?: number;
+  peer_view?: Rating | null;
+  peer_share?: number | null;
 }
 
 /** One factor of a call's trust score, as known on the call date. */

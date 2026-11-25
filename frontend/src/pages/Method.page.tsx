@@ -1,17 +1,15 @@
-import { useApi, type Meta } from '../api';
+﻿import { useApi, type Meta } from '../api';
 import { ErrorBox, GradeChip, Loading } from '../components/ui';
 import { day, pct } from '../format';
 
 const RISK_LABELS: Record<string, string> = {
-  track: 'Analyst’s stock-specific track record known at the call date (inverse)',
+  track: "Analyst's stock-specific track record known at the call date (inverse)",
   volatility: 'Stock price volatility, trailing 1 year (percentile)',
-  implied_move: 'Size of the promised target move (percentile)',
-  confidence: 'The call’s own trust score (inverse)',
-  alignment: 'Score alignment: share of other analysts holding the same view (inverse)',
+  confidence: "The call's own trust score (inverse)",
 };
 const FACTOR_NAMES: Record<string, string> = {
-  success: 'Historical success rate', tp_accuracy: 'Target price accuracy', experience: 'Experience depth',
-  sector: 'Sector consistency', consensus: 'Consensus consistency',
+  success: 'Historical success rate', tp_accuracy: 'Target price realism',
+  sector: 'Sector expertise alignment', consensus: 'Market sentiment consistency',
 };
 const RISK_COLOR: Record<string, string> = { Low: '#089981', Moderate: '#8DB33A', Elevated: '#F5A524', High: '#F23645' };
 
@@ -49,7 +47,7 @@ export function MethodPage() {
     <div className="page">
       <div className="ph">
         <div>
-          <h1>How it’s scored, and how well it works</h1>
+          <h1>How it's scored, and how well it works</h1>
           <p>CRISP-DM Modelling and Evaluation. Every number on this page is produced by the backend pipeline from the cleaned dataset and Yahoo Finance prices.</p>
         </div>
       </div>
@@ -64,8 +62,8 @@ export function MethodPage() {
             ))}
           </tbody></table></div>
           <div className="pad mini">
-            <p><b>Analyst score</b>: the factors over all of an analyst’s scored calls; small records are shrunk toward the market rate. Grades: top 20% A, next 30% B, next 30% C, bottom 20% D.</p>
-            <p><b>Trust score of each call</b>: the same five factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts’ views in the previous 90 days).</p>
+            <p><b>Analyst score</b>: the factors over all of an analyst's scored calls; small records are shrunk toward the market rate. Grades: top 20% A, next 30% B, next 30% C, bottom 20% D.</p>
+            <p><b>Trust score of each call</b>: the same five factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts' views in the previous 90 days).</p>
           </div>
         </section>
 
@@ -86,16 +84,16 @@ export function MethodPage() {
           <div className="pad mini">
             <p>BUY is a hit if the price is higher 12 months after the report; SELL if it is lower; HOLD if it moved less than ±10%.</p>
             <p>Target price accuracy = |price after 12 months − target| ÷ price at the call (capped at 100%).</p>
-            <p>Targets are put on the same basis as Yahoo prices using recorded stock splits. A delisted or suspended stock is scored at its last traded price. Calls younger than 12 months stay “in window”.</p>
+            <p>Targets are put on the same basis as Yahoo prices using recorded stock splits. A delisted or suspended stock is scored at its last traded price. Calls younger than 12 months stay "in window".</p>
           </div>
         </section>
 
         <section className="panel">
           <div className="ptitle">Module 2 · Analyst Bias Detection <span>compared with the market</span></div>
           <div className="pad mini">
-            <p><b>Optimism bias</b>: buy share more than 10 points above the market’s.</p>
-            <p><b>Sell avoidance</b>: sell share under half the market’s.</p>
-            <p><b>Inflated targets</b>: the average deviation of BUY targets from the realised 12-month price is 8+ points above the market’s.</p>
+            <p><b>Optimism bias</b>: buy share more than 10 points above the market's.</p>
+            <p><b>Sell avoidance</b>: sell share under half the market's.</p>
+            <p><b>Inflated targets</b>: the average deviation of BUY targets from the realised 12-month price is 8+ points above the market's.</p>
             {m.market_bias && <p>Market today: {pct(m.market_bias.buy_share)} BUY · {pct(m.market_bias.sell_share)} SELL · {m.market_bias.buy_to_sell?.toFixed(1)} : 1 · average BUY target overshoot {pct(m.market_bias.tp_overshoot)}.</p>}
           </div>
         </section>
@@ -154,7 +152,7 @@ export function MethodPage() {
                   ))}
                 </tbody>
               </table></div>
-              <div className="pad mini"><p>Coefficients are standardised (one standard deviation of each factor). “Coef. share” = |coefficient| ÷ the sum of all |coefficients|, to put it on the same scale as the weights.</p></div>
+              <div className="pad mini"><p>Coefficients are standardised (one standard deviation of each factor). "Coef. share" = |coefficient| ÷ the sum of all |coefficients|, to put it on the same scale as the weights.</p></div>
             </section>
 
             <section className="panel">
@@ -194,7 +192,7 @@ export function MethodPage() {
                   )))}
                 </tbody>
               </table></div>
-              <div className="tblnote">Bold = the behaviour each flag measures. “Persists” = the flagged group still shows more of it after the split date.</div>
+              <div className="tblnote">Bold = the behaviour each flag measures. "Persists" = the flagged group still shows more of it after the split date.</div>
             </section>
 
             {v.lime_test && (
@@ -214,7 +212,7 @@ export function MethodPage() {
 
             {v.min_calls && (
               <section className="panel">
-                <div className="ptitle">How many scored calls make a score meaningful? <span>“thin sample” below {v.min_calls.threshold_used}</span></div>
+                <div className="ptitle">How many scored calls make a score meaningful? <span>"thin sample" below {v.min_calls.threshold_used}</span></div>
                 <div className="tbl"><table className="wrap">
                   <thead><tr><th>CALLS (n)</th><th>95% CI OF A HIT RATE</th><th>RELIABILITY</th><th>ANALYSTS WITH 2n</th></tr></thead>
                   <tbody>
@@ -226,7 +224,7 @@ export function MethodPage() {
                     ))}
                   </tbody>
                 </table></div>
-                <div className="pad mini"><p>Reliability = split-half correlation of two disjoint sets of n calls (Spearman–Brown corrected). Rule: {v.min_calls.rule} → <b>{v.min_calls.suggested ?? '–'}</b> calls. Below that, the score leans on the market average (shrinkage k = 20) and shows a “Thin sample” tag.</p></div>
+                <div className="pad mini"><p>Reliability = split-half correlation of two disjoint sets of n calls (Spearman–Brown corrected). Rule: {v.min_calls.rule} → <b>{v.min_calls.suggested ?? '–'}</b> calls. Below that, the score leans on the market average (shrinkage k = 20) and shows a "Thin sample" tag.</p></div>
               </section>
             )}
           </div>
@@ -249,7 +247,7 @@ export function MethodPage() {
       )}
 
       <section className="panel" style={{ marginTop: 18 }}>
-        <div className="ptitle">Usability feedback from visitors <span>the “Rate this page” button, 1–5</span></div>
+        <div className="ptitle">Usability feedback from visitors <span>the "Rate this page" button, 1–5</span></div>
         {fb.data && fb.data.responses > 0 ? (
           <div className="tbl"><table className="wrap">
             <thead><tr><th>PAGE</th><th>RESPONSES</th><th>EASY TO UNDERSTAND</th><th>HELPS DECIDE WHOM TO TRUST</th></tr></thead>
