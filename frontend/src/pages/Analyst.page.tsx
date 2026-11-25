@@ -14,7 +14,7 @@ function verdict(a: AnalystDetail) {
   return { A: 'Top 20% of rated analysts.', B: 'Above the middle of the pack.', C: 'Below the middle. Check the factors before relying on a call.', D: 'Bottom 20%. Past calls have often not played out.' }[a.grade as 'A'];
 }
 
-function BiasCell({ title, v, m, max, flagged, fmt, note }: { title: string; v: number | null; m: number; max: number; flagged: boolean; fmt: (x: number) => string; note: string }) {
+function BiasCell({ title, v, m, max, flagged, fmt, note }: { title: string; v: number | null; m: number | null; max: number; flagged: boolean; fmt: (x: number) => string; note: string }) {
   const p = (x: number) => `${Math.max(0, Math.min(100, (x / max) * 100))}%`;
   return (
     <div>
@@ -23,9 +23,9 @@ function BiasCell({ title, v, m, max, flagged, fmt, note }: { title: string; v: 
       <div className="track">
         <div className="ln" />
         {v !== null && <div className="fill" style={{ width: p(v), background: flagged ? 'var(--amber)' : 'var(--blue)' }} />}
-        <div className="mk" style={{ left: p(m) }} title={`Market ${fmt(m)}`} />
+        {m !== null && <div className="mk" style={{ left: p(m) }} title={`Market ${fmt(m)}`} />}
       </div>
-      <div className="mu" style={{ fontSize: 12.5, marginTop: 4 }}>{flagged && <b style={{ color: '#C27A00' }}>Flagged. </b>}Black tick = market {fmt(m)}. {note}</div>
+      <div className="mu" style={{ fontSize: 12.5, marginTop: 4 }}>{flagged && <b style={{ color: '#C27A00' }}>Flagged. </b>}{m !== null ? `Black tick = market ${fmt(m)}. ` : 'No market benchmark yet. '}{note}</div>
     </div>
   );
 }
@@ -116,7 +116,7 @@ export function AnalystPage() {
               note={`Buy:sell ${b.buy_to_sell ? `${b.buy_to_sell.toFixed(1)} : 1` : 'no sells'}.`} />
             <BiasCell title="Sell-rating share" v={b.sell_share} m={m.sell_share} max={Math.max(30, b.sell_share * 1.2)} flagged={flags.includes('Sell avoidance')} fmt={(x) => `${x.toFixed(1)}%`}
               note="Sells are rare across brokers." />
-            <BiasCell title="Target overshoot on BUYs" v={b.tp_overshoot} m={m.tp_overshoot ?? 0} max={Math.max(60, (b.tp_overshoot ?? 0) * 1.2)} flagged={flags.includes('Inflated targets')} fmt={(x) => signedPct(x)}
+            <BiasCell title="Target overshoot on BUYs" v={b.tp_overshoot} m={m.tp_overshoot} max={Math.max(60, (b.tp_overshoot ?? 0) * 1.2)} flagged={flags.includes('Inflated targets')} fmt={(x) => signedPct(x)}
               note="Average gap between BUY targets and the price 12 months later." />
           </div>
         </section>
