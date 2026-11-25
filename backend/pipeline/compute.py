@@ -44,9 +44,9 @@ def run_all(as_of: date | None = None) -> dict:
     df = evaluate(recs, prices, splits, as_of)
     df = add_consensus(df)
     scores, market_score = compute_scores(df, sector_of)                      # Module 1, analyst level
-    df = call_level_scores(df, sector_of, market_score["experience_ref_calls"])  # Module 1, per call (trust score)
-    bias, market_bias = compute_bias(df)                                        # Module 2
-    df = compute_risk(df, market_score["hit_rate"] / 100)                       # Module 3
+    df = call_level_scores(df, sector_of)  # Module 1, per call (trust score)
+    bias, market_bias = compute_bias(df)   # Module 2
+    df = compute_risk(df)                  # Module 3
     parts = breakdowns(df, sector_of)
     print("validating (model comparison, out-of-sample tests) ...")
     validation = run_validation(df)                                             # CRISP-DM Evaluation

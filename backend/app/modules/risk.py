@@ -26,24 +26,47 @@ def level_of(score: float) -> str:
     return RISK_LEVELS[-1][1]
 
 
-def point_in_time_track(df: pd.DataFrame, market_hit: float) -> pd.DataFrame:
-    """Adds prior_n, prior_hit_rate, prior_scope for every call."""
+def point_in_time_track(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds prior_n, prior_hit_rate, prior_scope for every call.
+
+    The market-wide baseline is itself point-in-time: for a recommendation on
+    date d only outcomes whose eval_end_date fell strictly before d are counted,
+    so no future resolved calls enter the shrinkage prior.
+    Fallback when no prior market outcomes exist: 0.5 (neutral).
+    """
     out = df.copy()
-    out["prior_n"], out["prior_hit_rate"], out["prior_scope"] = 0, market_hit, "market"
-    ev = df[df["status"] == "evaluated"]
+    ev = df[df["status"] == "evaluated"].copy()
+
+    # Build cumulative market hit-rate indexed by eval_end_date (ascending).
+    mk = ev.sort_values("eval_end_date")
+    m_ends = pd.to_datetime(mk["eval_end_date"]).to_numpy().astype("datetime64[D]")
+    m_hits_cum = np.concatenate([[0], mk["hit"].astype(int).cumsum().to_numpy()])
+
+    def _market_hit_at(d64: np.datetime64) -> float:
+        k = int(np.searchsorted(m_ends, d64, "left"))
+        return float(m_hits_cum[k]) / k if k > 0 else 0.5
+
+    out["prior_n"] = 0
+    out["prior_hit_rate"] = 0.5
+    out["prior_scope"] = "market"
+
     for aid, g in df.groupby("analyst_id"):
         e = ev[ev["analyst_id"] == aid].sort_values("eval_end_date")
-        ends = pd.to_datetime(e["eval_end_date"]).to_numpy()
+        ends = pd.to_datetime(e["eval_end_date"]).to_numpy().astype("datetime64[D]")
         cum = np.concatenate([[0], e["hit"].astype(int).cumsum().to_numpy()])
         for i, r in g.iterrows():
-            d = np.datetime64(pd.Timestamp(r["report_date"]))
-            k = int(np.searchsorted(ends, d, "left"))      # calls already resolved before this one
+            d = np.datetime64(pd.Timestamp(r["report_date"]), "D")
+            mh = _market_hit_at(d)
+            out.loc[i, "prior_hit_rate"] = mh
+            k = int(np.searchsorted(ends, d, "left"))
             same = e.iloc[:k]
             same = same[same["stock_id"] == r["stock_id"]]
             if len(same) >= MIN_STOCK_TRACK:
-                out.loc[i, ["prior_n", "prior_hit_rate", "prior_scope"]] = [len(same), same["hit"].astype(bool).mean(), "stock"]
+                out.loc[i, ["prior_n", "prior_hit_rate", "prior_scope"]] = [
+                    len(same), float(same["hit"].astype(bool).mean()), "stock"
+                ]
             elif k > 0:
-                rate = (cum[k] + SHRINK_K * market_hit) / (k + SHRINK_K)
+                rate = (cum[k] + SHRINK_K * mh) / (k + SHRINK_K)
                 out.loc[i, ["prior_n", "prior_hit_rate", "prior_scope"]] = [k, rate, "analyst"]
     return out
 
@@ -65,8 +88,8 @@ def _pit_percentile(series: pd.Series, dates: pd.Series) -> pd.Series:
     return pd.Series(result, index=series.index)
 
 
-def compute_risk(df: pd.DataFrame, market_hit: float) -> pd.DataFrame:
-    out = point_in_time_track(df, market_hit)
+def compute_risk(df: pd.DataFrame) -> pd.DataFrame:
+    out = point_in_time_track(df)
     entry = out["entry_price"].astype(float).where(lambda x: x > 0)
     out["implied_move"] = (out["target_price"].astype(float) / entry - 1).abs()
     # Point-in-time percentiles: each call ranked only against calls on or before

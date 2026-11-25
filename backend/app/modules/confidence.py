@@ -103,8 +103,13 @@ def explain(factors: dict) -> list[dict]:
 # call date (calls whose 12-month window had already closed, and peer calls already published),
 # so the score shown on a call is exactly what an investor could have known when reading it.
 # ---------------------------------------------------------------------------------------------
-def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None], ref_n: float) -> pd.DataFrame:
-    """Adds confidence_score (0-100) and confidence_factors (dict) to every call."""
+def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None]) -> pd.DataFrame:
+    """Adds confidence_score (0-100) and confidence_factors (dict) to every call.
+
+    ref_n (95th-percentile analyst experience) is computed point-in-time: for each
+    recommendation date only the counts of previously-resolved analyst records are used,
+    so no future call volume enters the experience normaliser.
+    """
     out = df.copy()
     out["sector"] = out["stock_id"].map(sector_of).fillna("Unclassified")
     ev = out[out["status"] == "evaluated"].copy()
@@ -119,11 +124,27 @@ def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None], ref_n:
     m_err_sum = np.concatenate([[0.0], err.fillna(0).cumsum().to_numpy()])
     m_err_n = np.concatenate([[0], err.notna().astype(int).cumsum().to_numpy()])
 
+    # For point-in-time ref_n: sorted market eval_end_dates and per-analyst resolved counts
+    _mk_ends_sorted = m_end.copy()
+    _mk_analyst = mk["analyst_id"].to_numpy()
+
     def market_at(d):
         k = int(np.searchsorted(m_end, d, "left"))
         hit = m_hits[k] / k if k else 0.5
         e = m_err_sum[k] / m_err_n[k] if m_err_n[k] else 0.5
         return hit, e
+
+    def ref_n_at(d) -> float:
+        """95th-percentile of per-analyst resolved-call counts, using only calls resolved before d."""
+        k = int(np.searchsorted(_mk_ends_sorted, d, "left"))
+        if k == 0:
+            return 1.0
+        analysts_before = _mk_analyst[:k]
+        counts = np.bincount(analysts_before.astype(int))
+        counts_nonzero = counts[counts > 0]
+        if len(counts_nonzero) == 0:
+            return 1.0
+        return float(np.percentile(counts_nonzero, 95))
 
     scores, factors = [], []
     idx = []
@@ -137,6 +158,7 @@ def call_level_scores(df: pd.DataFrame, sector_of: dict[int, str | None], ref_n:
             d = np.datetime64(pd.Timestamp(r["report_date"]))
             k = int(np.searchsorted(ends, d, "left"))            # own calls already resolved
             m_hit, m_err = market_at(d)
+            ref_n = ref_n_at(d)
             h = int(hits[:k].sum())
             ek = errs[:k][~np.isnan(errs[:k])]
             same = secs[:k] == r["sector"]

@@ -161,6 +161,104 @@ def test_stock_brokers_exports_feedback(app):
     assert "not a stock recommender" in s["disclaimer"] and "financial advice" in s["disclaimer"]
 
 
+# ---- point-in-time fix regression tests ----
+
+def _minimal_df(n_analysts=2, n_calls=6, seed=42):
+    """Return a minimal recommendations DataFrame for unit testing PIT fixes."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    base = date(2021, 1, 1)
+    for i in range(n_calls):
+        aid = i % n_analysts + 1
+        d = base + timedelta(days=i * 60)
+        eval_d = d + timedelta(days=365)
+        rows.append({
+            "id": i + 1,
+            "analyst_id": aid,
+            "stock_id": 1,
+            "report_date": d,
+            "rating": "BUY",
+            "target_price": 1.1,
+            "entry_price": 1.0,
+            "price_12m": 1.05,
+            "volatility": 0.2 + 0.01 * i,
+            "eval_end_date": eval_d,
+            "status": "evaluated",
+            "hit": bool(i % 2 == 0),
+            "tp_error": 0.05,
+            "confidence_score": 60.0,
+            "peer_n": 0,
+            "peer_view": None,
+            "peer_share": 0.5,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_fix_a_market_baseline_fallback():
+    """Fix A: when no prior market outcomes exist, prior_hit_rate must be 0.5."""
+    from app.modules.risk import point_in_time_track
+    df = _minimal_df()
+    out = point_in_time_track(df)
+    # The first call (earliest report_date) has no earlier resolved outcomes → fallback 0.5
+    first = out.sort_values("report_date").iloc[0]
+    assert first["prior_hit_rate"] == pytest.approx(0.5)
+    assert first["prior_scope"] == "market"
+
+
+def test_fix_a_no_future_outcomes_in_market_baseline():
+    """Fix A: market baseline for scope='market' must only use outcomes with eval_end_date < report_date."""
+    from app.modules.risk import point_in_time_track
+    df = _minimal_df(n_calls=6)
+    out = point_in_time_track(df)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["eval_end_date"] = pd.to_datetime(ev["eval_end_date"])
+    for _, row in out[out["prior_scope"] == "market"].iterrows():
+        d = pd.Timestamp(row["report_date"])
+        prior_ev = ev[ev["eval_end_date"] < d]
+        expected = float(prior_ev["hit"].astype(bool).mean()) if len(prior_ev) else 0.5
+        assert row["prior_hit_rate"] == pytest.approx(expected, abs=1e-9)
+
+
+def test_fix_b_ref_n_is_point_in_time():
+    """Fix B: ref_n for experience factor must only use analyst counts resolved before report_date."""
+    from app.modules.confidence import call_level_scores
+    df = _minimal_df(n_analysts=3, n_calls=12)
+    # drop columns call_level_scores will produce itself to avoid join collision
+    df = df.drop(columns=["confidence_score"], errors="ignore")
+    df["sector"] = "Technology"
+    df["consensus_agree"] = None
+    df["peer_n"] = 0
+    df["peer_share"] = 0.5
+    df["peer_view"] = None
+    sector_of = {1: "Technology"}
+    out = call_level_scores(df, sector_of)
+    # All calls must have a confidence_score computed (no crash / NaN)
+    assert out["confidence_score"].notna().all()
+    # Experience factor for the very first call must be 0 (no prior resolved calls)
+    first_i = out.sort_values("report_date").index[0]
+    factors = out.loc[first_i, "confidence_factors"]
+    assert factors["values"]["experience"] == pytest.approx(0.0)
+
+
+def test_fix_c_same_day_peers_excluded():
+    """Fix C: peer_share must not count same-day recommendations as backward-looking peers."""
+    from pipeline.outcomes import add_consensus
+    # Two analysts publish on the same day: same-day call must NOT see each other in peer_share
+    d = date(2022, 6, 1)
+    df = pd.DataFrame([
+        {"id": 1, "analyst_id": 1, "stock_id": 1, "report_date": d, "rating": "BUY",
+         "target_price": 1.1, "entry_price": 1.0, "price_12m": 1.05,
+         "status": "evaluated", "hit": True, "eval_end_date": d + timedelta(days=365)},
+        {"id": 2, "analyst_id": 2, "stock_id": 1, "report_date": d, "rating": "SELL",
+         "target_price": 0.9, "entry_price": 1.0, "price_12m": 1.05,
+         "status": "evaluated", "hit": False, "eval_end_date": d + timedelta(days=365)},
+    ])
+    out = add_consensus(df)
+    # Both calls are on the same day — neither should count the other as a prior peer
+    assert int(out.loc[0, "peer_n"] or 0) == 0
+    assert int(out.loc[1, "peer_n"] or 0) == 0
+
+
 def test_analyst_is_one_person_across_brokers(tmp_path):
     """IR Table 3: the analyst (a person) is the unit of evaluation, even after moving broker."""
     app = create_app({"SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / 'p.db'}", "TESTING": True})

@@ -128,7 +128,7 @@ def add_consensus(df: pd.DataFrame) -> pd.DataFrame:
                 if r.get("status") == "evaluated" and len(tps) and r["entry_price"]:
                     out.at[i, "consensus_tp_error"] = min(1.0, float(abs(r["price_12m"] - tps.mean()) / r["entry_price"]))
             # backward-looking window (point-in-time)
-            back = other & (dates <= d) & (dates >= d - win)
+            back = other & (dates < d) & (dates >= d - win)
             if back.any():
                 latest = {}
                 for a, rt in zip(analysts[back], ratings[back]):   # dates ascending -> last write = latest view
