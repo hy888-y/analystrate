@@ -13,17 +13,18 @@ Three equal-weight components (1/3 each), all 0-100, higher = riskier:
              return volatility, ranked against all calls on or before the same date.
              Higher percentile = more volatile = higher risk contribution.
 
-  confidence Confidence score alignment (inverse of the call's trust score).
-             100 - confidence_score, where confidence_score is the four-factor
-             Explainable Confidence Score computed point-in-time for this call.
-             A call with low trust (confidence_score near 0) is poorly supported by the
-             analyst's track record, sector expertise, target realism, and peer sentiment
-             — meaning the call itself is a poor source of trust and therefore higher risk.
-             A call with high trust (confidence_score near 100) is well-supported → its
-             confidence alignment component is near 0 → lower risk contribution.
-             This is not an independent consensus or market-sentiment component: it
-             summarises the same four-factor trust evidence already in the confidence score,
-             reframed as a risk contribution.
+  confidence Call trust score (inverted): 100 - confidence_score.
+             confidence_score is the four-factor Explainable Confidence Score computed
+             point-in-time for this call (success, tp_accuracy, sector, consensus).
+             Inverting it converts a "how trustworthy is this call?" measure into a risk
+             contribution: a low-trust call (score near 0) → component near 100 → high
+             risk; a high-trust call (score near 100) → component near 0 → low risk.
+
+             Limitation: this is NOT a separate or independent alignment measure; it is
+             the same four-factor evidence already in the confidence score, reframed as a
+             risk contribution. The proposal names this component "confidence score
+             alignment". The available data supports only this inverse calculation.
+             This requirement is therefore marked PARTIAL.
 
 Removed: implied_move (independent promised-move size) and alignment (independent
 consensus agreement) are NOT part of the approved three-component structure.

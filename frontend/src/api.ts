@@ -179,16 +179,6 @@ export interface BrokerRow {
   avg_trust: number | null;
 }
 
-export interface ModelRow {
-  model: string;
-  key: string;
-  trained: boolean;
-  auc: number | null;
-  accuracy: number | null;
-  brier: number | null;
-  explainable: string;
-}
-
 export interface Validation {
   status: string;
   reason?: string;
@@ -197,28 +187,13 @@ export interface Validation {
   n_test?: number;
   base_rate_test?: number;
   weighted_auc?: number;
-  logit_auc?: number;
   risk_meter_auc?: number;
-  model_comparison?: ModelRow[];
-  comparison_summary?: { best_auc_model: string; auc_gap_vs_best: number };
-  weights_vs_coef?: { factor: string; weight: number; coefficient: number; coef_share: number; rf_importance: number; same_direction: boolean }[];
   confidence_test?: {
     by_quintile: { quintile: number; calls: number; hit_rate: number; avg_score: number }[];
     by_grade: { grade: Grade; analysts: number; calls: number; hit_rate: number }[];
   };
   bias_test?: { flag: string; measure: 'buy_share' | 'sell_share' | 'avg_overshoot'; flagged: BiasGroup; not_flagged: BiasGroup; persists: boolean | null }[];
-  model_calls?: { min_history: number; n_train: number; n_test: number; base_rate_test: number };
   risk_test?: { level: RiskLevel; calls: number; hit_rate: number }[];
-  lime_test?: {
-    model: string;
-    cases: number;
-    lime_fidelity_r2: number;
-    lime_top_factor_stable_pct: number;
-    lime_agrees_with_transparent_pct: number;
-    transparent_fidelity_r2: number;
-    transparent_stable_pct: number;
-    note: string;
-  };
   min_calls?: {
     rows: { n: number; ci_half_width_pts: number; analysts_with_2n: number; split_half_r: number | null; reliability: number | null }[];
     market_hit_rate: number;

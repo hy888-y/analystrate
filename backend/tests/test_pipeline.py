@@ -131,10 +131,9 @@ def test_end_to_end(app):
 
     m = c.get("/api/meta").get_json()
     v = m["validation"]
-    assert len(m["weights"]) == 4 and "logit_auc" in v
-    assert {x["key"] for x in v["model_comparison"]} == {"weighted", "logit", "rf", "gb"}
-    assert [x["factor"] for x in v["weights_vs_coef"]] == list(WEIGHTS)
-    assert v["lime_test"]["transparent_fidelity_r2"] == 1.0 and v["min_calls"]["rows"]
+    assert len(m["weights"]) == 4 and "weighted_auc" in v
+    assert "model_comparison" not in v and "lime_test" not in v and "weights_vs_coef" not in v
+    assert v["min_calls"]["rows"]
     assert {b["flag"] for b in v["bias_test"]} == {"Optimism bias", "Sell avoidance", "Inflated targets"}
     assert v["cohorts"] and v["risk_test"]
 

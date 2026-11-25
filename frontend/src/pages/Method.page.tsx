@@ -5,11 +5,7 @@ import { day, pct } from '../format';
 const RISK_LABELS: Record<string, string> = {
   track: "Analyst's stock-specific track record known at the call date (inverse)",
   volatility: 'Stock price volatility, trailing 1 year (percentile)',
-  confidence: "Confidence score alignment: how well the call's trustworthiness aligns with low risk (inverse of the call's trust score)",
-};
-const FACTOR_NAMES: Record<string, string> = {
-  success: 'Historical success rate', tp_accuracy: 'Target price realism',
-  sector: 'Sector expertise alignment', consensus: 'Market sentiment consistency',
+  confidence: "Call trust score (inverted): 100 minus the call's own trust score — a low-trust call contributes more risk",
 };
 const RISK_COLOR: Record<string, string> = { Low: '#089981', Moderate: '#8DB33A', Elevated: '#F5A524', High: '#F23645' };
 
@@ -109,52 +105,12 @@ export function MethodPage() {
             checked on the {v.n_test?.toLocaleString()} calls made after that date ({v.n_train?.toLocaleString()} before). Base hit rate in the test period: {pct(base)}.
           </p>
           <div className="kv panel" style={{ marginBottom: 18 }}>
-            <div><b className="num">{v.weighted_auc?.toFixed(3)}</b><span>Trust score AUC (chosen model)</span></div>
-            <div><b className="num">{v.logit_auc?.toFixed(3)}</b><span>Logistic regression AUC</span></div>
+            <div><b className="num">{v.weighted_auc?.toFixed(3)}</b><span>Trust score AUC</span></div>
             <div><b className="num">{v.risk_meter_auc?.toFixed(3)}</b><span>Risk meter AUC</span></div>
             <div><b className="num">{v.n_test?.toLocaleString()}</b><span>test calls</span></div>
           </div>
 
           <div className="cols2">
-            <section className="panel">
-              <div className="ptitle">Model comparison <span>same four factors · {v.model_calls?.n_test.toLocaleString()} test calls with history</span></div>
-              <div className="tbl"><table className="wrap">
-                <thead><tr><th>MODEL</th><th>AUC</th><th>ACCURACY</th><th>BRIER</th><th>EXPLAINABLE TO AN INVESTOR</th></tr></thead>
-                <tbody>
-                  {v.model_comparison?.map((r) => (
-                    <tr key={r.key} style={r.key === 'weighted' ? { background: 'var(--sky)' } : undefined}>
-                      <td><b>{r.model}</b></td><td className="num">{r.auc?.toFixed(3)}</td><td className="num">{r.accuracy?.toFixed(3) ?? '–'}</td>
-                      <td className="num">{r.brier?.toFixed(3) ?? '–'}</td><td style={{ whiteSpace: 'normal' }}>{r.explainable}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
-              <div className="pad mini">
-                <p>Calls whose analyst already had {v.model_calls?.min_history ?? 1}+ scored call on the call date ({v.model_calls?.n_train.toLocaleString()} train / {v.model_calls?.n_test.toLocaleString()} test); before that every factor is only the market default. AUC 0.5 = no better than chance. Best AUC: {v.comparison_summary?.best_auc_model} ({v.comparison_summary && v.comparison_summary.auc_gap_vs_best > 0 ? `${v.comparison_summary.auc_gap_vs_best.toFixed(3)} above` : 'equal to'} the weighted score).
-                  The weighted score is kept because its explanation on screen is exact, which the black-box models cannot give (Rudin, 2019).</p>
-              </div>
-            </section>
-
-            <section className="panel">
-              <div className="ptitle">Factor weights vs logistic regression <span>do both approaches agree?</span></div>
-              <div className="tbl"><table className="wrap">
-                <thead><tr><th>FACTOR</th><th>WEIGHT</th><th>LOGIT COEF.</th><th>COEF. SHARE</th><th>RF IMPORTANCE</th><th>DIRECTION</th></tr></thead>
-                <tbody>
-                  {v.weights_vs_coef?.map((r) => (
-                    <tr key={r.factor}>
-                      <td><b>{FACTOR_NAMES[r.factor] ?? r.factor}</b></td>
-                      <td className="num">{Math.round(r.weight * 100)}%</td>
-                      <td className="num">{r.coefficient.toFixed(3)}</td>
-                      <td className="num">{(r.coef_share * 100).toFixed(0)}%</td>
-                      <td className="num">{(r.rf_importance * 100).toFixed(0)}%</td>
-                      <td>{r.same_direction ? <span className="ok" title="positive, same as the weight">✓ +</span> : <span className="no" title="negative, opposite to the weight">✗ −</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
-              <div className="pad mini"><p>Coefficients are standardised (one standard deviation of each factor). "Coef. share" = |coefficient| ÷ the sum of all |coefficients|, to put it on the same scale as the weights.</p></div>
-            </section>
-
             <section className="panel">
               <div className="ptitle">Module 1 check: does a higher trust score mean more calls played out? <span>test calls with history</span></div>
               <Bars base={base} rows={(v.confidence_test?.by_quintile ?? []).map((q) => ({
@@ -194,21 +150,6 @@ export function MethodPage() {
               </table></div>
               <div className="tblnote">Bold = the behaviour each flag measures. "Persists" = the flagged group still shows more of it after the split date.</div>
             </section>
-
-            {v.lime_test && (
-              <section className="panel">
-                <div className="ptitle">Explainability: transparent factors vs LIME <span>{v.lime_test.cases} test calls · {v.lime_test.model}</span></div>
-                <div className="tbl"><table className="wrap">
-                  <thead><tr><th>CHECK</th><th>TRANSPARENT SCORE</th><th>LIME ON BLACK BOX</th></tr></thead>
-                  <tbody>
-                    <tr><td>Fidelity (R² of the explanation)</td><td className="num ok">{v.lime_test.transparent_fidelity_r2.toFixed(2)}</td><td className="num">{v.lime_test.lime_fidelity_r2.toFixed(2)}</td></tr>
-                    <tr><td>Same top factor when explained twice</td><td className="num ok">{v.lime_test.transparent_stable_pct}%</td><td className="num">{v.lime_test.lime_top_factor_stable_pct}%</td></tr>
-                    <tr><td>Top factor agrees with the transparent one</td><td className="num">–</td><td className="num">{v.lime_test.lime_agrees_with_transparent_pct}%</td></tr>
-                  </tbody>
-                </table></div>
-                <div className="pad mini"><p>LIME (Ribeiro et al., 2016) fits a local linear model around each call. {v.lime_test.note}</p></div>
-              </section>
-            )}
 
             {v.min_calls && (
               <section className="panel">

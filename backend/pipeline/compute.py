@@ -93,6 +93,6 @@ def run_all(as_of: date | None = None) -> dict:
         db.session.merge(Meta(key=key, value=json_safe(value)))
     db.session.commit()
     v = validation
-    short = {k: v.get(k) for k in ("status", "split_date", "n_train", "n_test", "weighted_auc", "logit_auc",
+    short = {k: v.get(k) for k in ("status", "split_date", "n_train", "n_test", "weighted_auc",
                                      "risk_meter_auc")}
     return {"summary": summary, "validation": short, "_full_validation": v}

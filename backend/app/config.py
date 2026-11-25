@@ -34,7 +34,7 @@ PRICE_MATCH_DAYS = 7        # nearest trading day must be within 7 calendar days
 
 # ---------- Explainable Confidence Score (Proposal Section 3: four equal factors) ----------
 # Transparent weighted-factor model. Weights sum to 1.0.
-# Part 2 evaluation compares these against logistic-regression coefficients (pipeline/validate.py).
+# CRISP-DM evaluation tests confidence score AUC and hit rate by quintile (pipeline/validate.py).
 # Experience depth is tracked as metadata (thin_sample flag, n_evaluated) but does NOT
 # independently contribute to the score per the approved FYP proposal.
 WEIGHTS = {
@@ -68,13 +68,10 @@ VOL_LOOKBACK_DAYS = 252     # trailing trading days used for volatility at the c
 MIN_STOCK_TRACK = 3         # need >=3 earlier evaluated calls on the stock to use stock-level record
 
 # ---------- CRISP-DM Evaluation (IR 3.2.1 Process 5, 2.2.5) ----------
-# Time-based split: models and grades are built only from information before this date and tested on
-# calls made after it. The dataset is mostly 2023-2026, so the first calls with any resolved history
-# appear in 2024; the split sits where both sides have enough evaluated calls with history.
+# Time-based split: grades and bias flags are built only from information before this date and tested
+# on calls made after it. The dataset is mostly 2023-2026, so the first calls with any resolved
+# history appear in 2024; the split sits where both sides have enough evaluated calls with history.
 VALIDATION_SPLIT = "2024-10-01"
-# The model comparison uses calls whose analyst already had at least this many scored calls on the
-# call date; before that every factor is only the market default and carries no information.
-MIN_HISTORY_FOR_MODELS = 1
 
 # ---------- Data downloads ----------
 # CSV export of all calls / analyst scores. Switched off: the public website does not offer downloads.
