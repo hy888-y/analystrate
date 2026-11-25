@@ -445,6 +445,47 @@ def test_scoring_weights_unchanged():
     assert abs(sum(RISK_WEIGHTS.values()) - 1.0) < 1e-9
 
 
+def _snap(date_str: str, price_days: list) -> "str | None":
+    """Python mirror of frontend/src/utils/snap.ts snapToTradingDay."""
+    if not price_days:
+        return None
+    if date_str < price_days[0]:
+        return None
+    if date_str > price_days[-1]:
+        return None
+    return next((t for t in price_days if t >= date_str), None)
+
+
+def test_snap_returns_none_when_prices_empty():
+    assert _snap("2024-01-01", []) is None
+
+
+def test_snap_returns_none_before_first_price_date():
+    days = ["2024-01-10", "2024-01-11", "2024-01-12"]
+    assert _snap("2024-01-09", days) is None   # one day before first price
+
+
+def test_snap_returns_none_after_last_price_date():
+    days = ["2024-01-10", "2024-01-11", "2024-01-12"]
+    assert _snap("2024-01-13", days) is None   # one day after last price
+
+
+def test_snap_exact_first_day():
+    days = ["2024-01-10", "2024-01-11", "2024-01-12"]
+    assert _snap("2024-01-10", days) == "2024-01-10"
+
+
+def test_snap_exact_last_day():
+    days = ["2024-01-10", "2024-01-11", "2024-01-12"]
+    assert _snap("2024-01-12", days) == "2024-01-12"
+
+
+def test_snap_weekend_snaps_forward_to_monday():
+    # 2024-01-13 is Saturday; next trading day is 2024-01-15 (Monday)
+    days = ["2024-01-12", "2024-01-15", "2024-01-16"]
+    assert _snap("2024-01-13", days) == "2024-01-15"
+
+
 def test_analyst_is_one_person_across_brokers(tmp_path):
     """IR Table 3: the analyst (a person) is the unit of evaluation, even after moving broker."""
     app = create_app({"SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / 'p.db'}", "TESTING": True})

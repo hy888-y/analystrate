@@ -6,6 +6,7 @@ import { createChart, type IChartApi, type ISeriesApi, type Time } from 'lightwe
 import type { Rec } from '../api';
 import { signedPct } from '../format';
 import { GRADE_RAW } from './ui';
+import { snapToTradingDay } from '../utils/snap';
 
 export type Range = '6M' | '1Y' | '3Y' | 'All';
 const DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 1095, All: 99999 };
@@ -34,15 +35,15 @@ export function PriceChart({ prices, calls, range }: { prices: { time: string; v
     series.setData(prices.map((p) => ({ time: p.time as Time, value: p.value })));
 
     // snap each call to the first trading day on/after its report date.
-    // Returns undefined when no price data exists on or after the report date
-    // (the call is beyond the available history), so such calls are excluded
-    // rather than incorrectly pinned to the last chart date.
+    // Returns undefined when:
+    //   - the report date is before the first available price date (would snap to wrong first day)
+    //   - the report date is after the last available price date (beyond history)
+    // Both cases are excluded from chart markers rather than being misplaced.
     const days = prices.map((p) => p.time);
-    const snap = (d: string): string | undefined => days.find((t) => t >= d);
     const byDay = new Map<string, Rec[]>();
     calls.forEach((c) => {
-      const t = snap(c.report_date);
-      if (t === undefined) return;   // skip calls beyond the price history range
+      const t = snapToTradingDay(c.report_date, days);
+      if (t === undefined) return;   // skip calls outside the price history range
       byDay.set(t, [...(byDay.get(t) ?? []), c]);
     });
     series.setMarkers(
