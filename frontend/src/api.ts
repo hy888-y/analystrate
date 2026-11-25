@@ -254,6 +254,21 @@ export interface Meta {
   market_bias?: BiasStats;
 }
 
+/** Minimal analyst shape returned by /search */
+export interface Analyst {
+  id: number;
+  name: string;
+  broker: string;
+  grade: Grade;
+}
+
+/** Minimal stock shape returned by /search */
+export interface StockSummary {
+  code: string;
+  name: string;
+  sector: string | null;
+}
+
 export async function postJSON(path: string, body: unknown) {
   const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`The server answered ${res.status}.`);
