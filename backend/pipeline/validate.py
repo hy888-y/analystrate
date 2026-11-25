@@ -5,7 +5,7 @@ Everything here is tested out of sample with a time-based split (VALIDATION_SPLI
 date, and is then checked against the 12-month outcomes of calls made after it.
 
   1. model_comparison   the transparent weighted score vs logistic regression, random forest and
-                        gradient boosting, all on the same five call-level factors (IR 2.2.5)
+                        gradient boosting, all on the same four call-level factors (IR 2.2.5)
   2. weights_vs_coef    logistic-regression coefficients compared with the factor weights (IR 2.2.5)
   3. confidence_test    hit rate by trust-score quintile and by analyst grade (grades from pre-split data)
   4. bias_test          later outcomes of analysts flagged by the bias module vs not flagged

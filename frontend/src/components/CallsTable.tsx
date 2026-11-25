@@ -33,7 +33,7 @@ export function Trust({ v }: { v: number | null }) {
 const RISK_NAMES: Record<string, string> = {
   track: 'Track record (inverse)',
   volatility: 'Volatility',
-  confidence: 'Trust score (inverse)',
+  confidence: 'Confidence score alignment (trust score inverse)',
 };
 
 function Details({ r }: { r: Rec }) {

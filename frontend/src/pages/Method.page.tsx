@@ -5,7 +5,7 @@ import { day, pct } from '../format';
 const RISK_LABELS: Record<string, string> = {
   track: "Analyst's stock-specific track record known at the call date (inverse)",
   volatility: 'Stock price volatility, trailing 1 year (percentile)',
-  confidence: "The call's own trust score (inverse)",
+  confidence: "Confidence score alignment: how well the call's trustworthiness aligns with low risk (inverse of the call's trust score)",
 };
 const FACTOR_NAMES: Record<string, string> = {
   success: 'Historical success rate', tp_accuracy: 'Target price realism',

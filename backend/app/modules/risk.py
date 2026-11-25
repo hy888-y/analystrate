@@ -1,13 +1,32 @@
 """Module 3 - Recommendation Risk Meter (Proposal Section 4): a graded risk level per call, not pass/fail.
 
 Three equal-weight components (1/3 each), all 0-100, higher = riskier:
-  track      100 - the analyst's hit rate known AT THE CALL DATE for the specific stock
-             (stock-level record if >= MIN_STOCK_TRACK earlier evaluated calls exist,
-             else the analyst's overall record shrunk toward the market; no look-ahead).
-  volatility percentile of the stock's trailing 1-year volatility at the call date
-  confidence 100 - the call's Explainable Confidence Score (four-factor, PIT)
 
-Removed components: implied_move and alignment (not part of the approved three).
+  track      Analyst stock-specific track record (inverse).
+             100 - prior_hit_rate for this stock, measured only from calls that had
+             already resolved (12-month window closed) BEFORE the recommendation date.
+             Falls back to the analyst's all-stock hit rate (Bayesian-shrunk toward the
+             market) when fewer than MIN_STOCK_TRACK stock-level calls exist.
+
+  volatility Stock price volatility at the call date.
+             Point-in-time percentile rank of the stock's trailing 1-year annualised
+             return volatility, ranked against all calls on or before the same date.
+             Higher percentile = more volatile = higher risk contribution.
+
+  confidence Confidence score alignment (inverse of the call's trust score).
+             100 - confidence_score, where confidence_score is the four-factor
+             Explainable Confidence Score computed point-in-time for this call.
+             A call with low trust (confidence_score near 0) is poorly supported by the
+             analyst's track record, sector expertise, target realism, and peer sentiment
+             — meaning the call itself is a poor source of trust and therefore higher risk.
+             A call with high trust (confidence_score near 100) is well-supported → its
+             confidence alignment component is near 0 → lower risk contribution.
+             This is not an independent consensus or market-sentiment component: it
+             summarises the same four-factor trust evidence already in the confidence score,
+             reframed as a risk contribution.
+
+Removed: implied_move (independent promised-move size) and alignment (independent
+consensus agreement) are NOT part of the approved three-component structure.
 Missing components are dropped and the remaining weights re-normalised.
 """
 from __future__ import annotations
