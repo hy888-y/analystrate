@@ -187,6 +187,41 @@ export function MethodPage() {
         </>
       )}
 
+      {v.logit_test && (
+        <section className="panel" style={{ marginTop: 18 }}>
+          <div className="ptitle">IR 2.2.5 · Logistic Regression validation <span>pre-split training only · features: 4 point-in-time trust-score factors</span></div>
+          {v.logit_test.status !== 'ok' ? (
+            <div className="pad mini"><p>Not run: {v.logit_test.reason ?? v.logit_test.status}</p></div>
+          ) : (
+            <>
+              <div className="kv panel" style={{ marginBottom: 0 }}>
+                <div><b className="num">{v.logit_test.metrics?.auc?.toFixed(3)}</b><span>ROC-AUC</span></div>
+                <div><b className="num">{v.logit_test.metrics?.accuracy?.toFixed(3)}</b><span>Accuracy</span></div>
+                <div><b className="num">{v.logit_test.metrics?.precision?.toFixed(3)}</b><span>Precision</span></div>
+                <div><b className="num">{v.logit_test.metrics?.recall?.toFixed(3)}</b><span>Recall</span></div>
+                <div><b className="num">{v.logit_test.metrics?.f1?.toFixed(3)}</b><span>F1</span></div>
+              </div>
+              <div className="ptitle" style={{ borderTop: '1px solid var(--line)' }}>Coefficient vs factor weight comparison <span>standardised features · IR 2.2.5</span></div>
+              <div className="tbl"><table className="wrap">
+                <thead><tr><th>FACTOR</th><th>LR COEFFICIENT</th><th>MODEL WEIGHT</th><th>DIRECTION</th></tr></thead>
+                <tbody>
+                  {v.logit_test.comparison?.map((c) => (
+                    <tr key={c.factor}>
+                      <td>{c.label}</td>
+                      <td className="num">{c.lr_coef?.toFixed(4)}</td>
+                      <td className="num">{c.model_weight?.toFixed(4)}</td>
+                      <td>{c.direction_agrees ? <span className="ok">&#x2713; positive</span> : <span className="no">&#x2717; negative</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+              {v.logit_test.note && <div className="pad mini"><p className="mu">{v.logit_test.note}</p></div>}
+              <div className="tblnote">{v.logit_test.n_train?.toLocaleString()} training calls · {v.logit_test.n_test?.toLocaleString()} test calls</div>
+            </>
+          )}
+        </section>
+      )}
+
       <section className="panel" style={{ marginTop: 18 }}>
         <div className="ptitle">Usability feedback from visitors <span>the "Rate this page" button, 1–5</span></div>
         {fb.data && fb.data.responses > 0 ? (

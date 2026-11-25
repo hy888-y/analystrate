@@ -202,6 +202,33 @@ export interface Validation {
     suggested: number | null;
   };
   cohorts?: { year: number; calls: number; evaluated: number; hit_rate: number | null; buy_share: number; sell_share: number; avg_trust: number | null }[];
+  logit_test?: {
+    status: string;
+    reason?: string;
+    n_train?: number;
+    n_test?: number;
+    features?: string[];
+    metrics?: {
+      auc: number | null;
+      accuracy: number | null;
+      precision: number | null;
+      recall: number | null;
+      f1: number | null;
+      confusion_matrix: number[][];
+    };
+    coefficients?: Record<string, number | null>;
+    intercept?: number | null;
+    comparison?: {
+      factor: string;
+      label: string;
+      lr_coef: number | null;
+      model_weight: number | null;
+      coef_positive: boolean;
+      direction_agrees: boolean;
+    }[];
+    coef_rank?: string[];
+    note?: string;
+  };
 }
 
 export interface BiasGroup {

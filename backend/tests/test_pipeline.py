@@ -523,3 +523,175 @@ def test_analyst_is_one_person_across_brokers(tmp_path):
         assert res["analysts"] == 1
         a = Analyst.query.one()
         assert a.brokers == ["RHB", "Kenanga"] and a.broker.name == "Kenanga"
+
+
+# ---- logistic regression tests ----
+
+def _lr_df(n_calls=500, n_analysts=10, seed=99):
+    """Minimal DataFrame with confidence_factors (PIT values), status, hit, and report_date."""
+    rng = np.random.default_rng(seed)
+    base = date(2020, 1, 1)
+    rows = []
+    for i in range(n_calls):
+        d = base + timedelta(days=int(rng.integers(0, 1800)))
+        is_ev = rng.random() > 0.2
+        hit = bool(rng.random() > 0.4) if is_ev else None
+        f_vals = {
+            "success":     float(rng.uniform(20, 90)),
+            "tp_accuracy": float(rng.uniform(20, 90)),
+            "sector":      float(rng.uniform(20, 90)),
+            "consensus":   float(rng.uniform(20, 90)),
+        }
+        rows.append({
+            "id": i + 1,
+            "analyst_id": i % n_analysts + 1,
+            "report_date": d,
+            "rating": "BUY",
+            "status": "evaluated" if is_ev else "in_window",
+            "hit": hit,
+            "confidence_score": sum(0.25 * v for v in f_vals.values()),
+            "confidence_factors": {"values": f_vals, "evidence": {}},
+            "risk_score": float(rng.uniform(20, 80)),
+            "risk_level": rng.choice(["Low", "Moderate", "Elevated", "High"]),
+            "eval_end_date": d + timedelta(days=365),
+        })
+    return pd.DataFrame(rows)
+
+
+def test_logit_excludes_unevaluated_calls():
+    """LR training must use only evaluated calls; n_train <= number of evaluated pre-split calls."""
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=500)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    split = pd.Timestamp("2022-07-01")
+    train, test = when < split, when >= split
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    if res["status"] == "ok":
+        # n_train comes from evaluated calls only, so it cannot exceed train.sum()
+        assert res["n_train"] <= int(train.sum())
+        assert res["n_test"] <= int(test.sum())
+        # Non-evaluated calls must not appear (n_train is bounded by evaluated-only subset)
+        assert res["n_train"] <= int((ev["status"] == "evaluated").sum())
+
+
+def test_logit_chronological_split_no_overlap():
+    """Train and test masks must be mutually exclusive with no call in both partitions."""
+    df = _lr_df(n_calls=500)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    split = pd.Timestamp("2022-07-01")
+    train, test = when < split, when >= split
+    assert not (train & test).any()
+    assert (when[train] < split).all()
+    assert (when[test] >= split).all()
+
+
+def test_logit_features_are_pit_factor_keys():
+    """Feature names must match exactly the four approved factor keys from WEIGHTS."""
+    from app.config import WEIGHTS
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=500)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    if res["status"] == "ok":
+        assert set(res["features"]) == set(WEIGHTS.keys())
+
+
+def test_logit_metrics_all_present():
+    """When status is ok, all required evaluation metrics must be present."""
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=600)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    if res["status"] == "ok":
+        m = res["metrics"]
+        assert all(k in m for k in ("auc", "accuracy", "precision", "recall", "f1", "confusion_matrix"))
+        # confusion matrix is a 2x2 list
+        assert isinstance(m["confusion_matrix"], list) and len(m["confusion_matrix"]) == 2
+        assert len(m["confusion_matrix"][0]) == 2
+
+
+def test_logit_coefficients_match_features():
+    """Coefficients dict must have exactly the same keys as the features list."""
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=600)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    if res["status"] == "ok":
+        assert set(res["coefficients"].keys()) == set(res["features"])
+
+
+def test_logit_comparison_covers_all_factors():
+    """Comparison list must have one entry per approved factor with required fields."""
+    from app.config import WEIGHTS
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=600)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    if res["status"] == "ok":
+        factors_compared = {c["factor"] for c in res["comparison"]}
+        assert factors_compared == set(WEIGHTS.keys())
+        for c in res["comparison"]:
+            assert all(k in c for k in ("factor", "label", "lr_coef", "model_weight", "direction_agrees"))
+            assert isinstance(c["direction_agrees"], bool)
+
+
+def test_logit_handles_insufficient_data():
+    """LR must return status='skipped' when training data has fewer than 50 rows."""
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=20)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    assert res["status"] == "skipped"
+    assert "reason" in res
+
+
+def test_logit_handles_single_class_training():
+    """LR must return status='skipped' when all training labels are the same class."""
+    from pipeline.validate import logistic_regression_test
+    df = _lr_df(n_calls=400)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev = ev.copy()
+    ev["hit"] = True   # force single class
+    when = pd.to_datetime(ev["report_date"])
+    train = when < pd.Timestamp("2022-07-01")
+    test  = when >= pd.Timestamp("2022-07-01")
+    res = logistic_regression_test(df, ev, train, test, "2022-07-01")
+    assert res["status"] == "skipped"
+
+
+def test_logit_in_end_to_end(app):
+    """run_all() must include logit_test in the validation output stored in /api/meta."""
+    m = app.test_client().get("/api/meta").get_json()
+    v = m["validation"]
+    assert "logit_test" in v
+    lt = v["logit_test"]
+    assert lt["status"] in ("ok", "skipped")
+    if lt["status"] == "ok":
+        from app.config import WEIGHTS
+        assert lt["metrics"]["auc"] is not None
+        assert len(lt["comparison"]) == len(WEIGHTS)
+        assert set(lt["coefficients"].keys()) == set(WEIGHTS.keys())

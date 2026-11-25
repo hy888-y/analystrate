@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.config import RISK_LEVELS, SHRINK_K, THIN_SAMPLE, VALIDATION_SPLIT, WEIGHTS
+from app.config import FACTOR_LABELS, RISK_LEVELS, SHRINK_K, THIN_SAMPLE, VALIDATION_SPLIT, WEIGHTS
 
 
 def _r(x, n=4):
@@ -149,6 +149,110 @@ def cohorts(df):
 
 
 # ------------------------------------------------------------------------------------------------
+def logistic_regression_test(df, ev, train, test, split):
+    """IR 2.2.5 Part 2: fit a Logistic Regression on the four PIT confidence factors and
+    compare its coefficients with the scoring model's equal factor weights.
+
+    Features are the four values from confidence_factors["values"] already stored on each
+    call by call_level_scores() — computed point-in-time with no look-ahead.  The model is
+    trained exclusively on pre-split evaluated calls and tested on post-split evaluated calls.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
+                                  precision_score, recall_score, roc_auc_score)
+    from sklearn.preprocessing import StandardScaler
+
+    factor_keys = list(WEIGHTS.keys())   # ["success", "tp_accuracy", "sector", "consensus"]
+
+    def _features(subset):
+        rows = []
+        for _, r in subset.iterrows():
+            cf = r.get("confidence_factors")
+            if isinstance(cf, dict) and "values" in cf:
+                v = cf["values"]
+                rows.append([v.get(k) for k in factor_keys])
+            else:
+                rows.append([None] * len(factor_keys))
+        return pd.DataFrame(rows, columns=factor_keys, index=subset.index).astype(float)
+
+    ev_tr, ev_te = ev[train], ev[test]
+    X_tr_raw, X_te_raw = _features(ev_tr), _features(ev_te)
+
+    ok_tr = X_tr_raw.notna().all(axis=1)
+    ok_te = X_te_raw.notna().all(axis=1)
+    X_tr = X_tr_raw[ok_tr].values
+    y_tr = ev_tr.loc[ok_tr, "hit"].astype(int).values
+    X_te = X_te_raw[ok_te].values
+    y_te = ev_te.loc[ok_te, "hit"].astype(int).values
+
+    n_tr_classes = int(len(np.unique(y_tr))) if len(y_tr) else 0
+    n_te_classes = int(len(np.unique(y_te))) if len(y_te) else 0
+
+    if len(X_tr) < 50 or n_tr_classes < 2:
+        return {"status": "skipped",
+                "reason": f"insufficient training data ({len(X_tr)} rows, {n_tr_classes} classes)"}
+    if len(X_te) < 20 or n_te_classes < 2:
+        return {"status": "skipped",
+                "reason": f"insufficient test data ({len(X_te)} rows, {n_te_classes} classes)"}
+
+    # Standardise features so coefficient magnitudes are comparable across factors.
+    scaler = StandardScaler()
+    X_tr_s = scaler.fit_transform(X_tr)
+    X_te_s = scaler.transform(X_te)
+
+    # class_weight="balanced" mitigates any BUY-dominant class imbalance; random_state for reproducibility.
+    lr = LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42)
+    lr.fit(X_tr_s, y_tr)
+
+    y_pred = lr.predict(X_te_s)
+    y_prob = lr.predict_proba(X_te_s)[:, 1]
+
+    auc   = _r(roc_auc_score(y_te, y_prob))
+    acc   = _r(accuracy_score(y_te, y_pred))
+    prec  = _r(precision_score(y_te, y_pred, zero_division=0))
+    rec   = _r(recall_score(y_te, y_pred, zero_division=0))
+    f1    = _r(f1_score(y_te, y_pred, zero_division=0))
+    cm    = confusion_matrix(y_te, y_pred).tolist()
+
+    coefs = lr.coef_[0]
+    comparison = []
+    for i, k in enumerate(factor_keys):
+        c = float(coefs[i])
+        comparison.append({
+            "factor": k,
+            "label": FACTOR_LABELS[k][0],
+            "lr_coef": _r(c),
+            "model_weight": _r(WEIGHTS[k]),
+            "coef_positive": bool(c > 0),
+            # Weight is always positive (0.25); LR agrees when its coefficient is also positive.
+            "direction_agrees": bool(c > 0),
+        })
+    coef_rank = sorted(factor_keys, key=lambda k: -abs(float(coefs[factor_keys.index(k)])))
+
+    return {
+        "status": "ok",
+        "n_train": int(len(X_tr)),
+        "n_test": int(len(X_te)),
+        "features": factor_keys,
+        "metrics": {
+            "auc": auc, "accuracy": acc, "precision": prec, "recall": rec,
+            "f1": f1, "confusion_matrix": cm,
+        },
+        "coefficients": {k: _r(float(coefs[i])) for i, k in enumerate(factor_keys)},
+        "intercept": _r(float(lr.intercept_[0])),
+        "comparison": comparison,
+        "coef_rank": coef_rank,
+        "note": (
+            "Coefficients are from a logistic regression trained on standardised features "
+            "(mean 0, sd 1). A positive coefficient means the factor moves the predicted "
+            "probability of success in the same direction as the scoring model. The scoring "
+            "model assigns all four factors equal 25% weights by design; the LR coefficients "
+            "reflect what the data supports and are not expected to be numerically equal."
+        ),
+    }
+
+
+# ------------------------------------------------------------------------------------------------
 def run_validation(df: pd.DataFrame, split_date: str = VALIDATION_SPLIT) -> dict:
     ev = df[df["status"] == "evaluated"].copy()
     ev["hit"] = ev["hit"].astype(bool)
@@ -167,6 +271,7 @@ def run_validation(df: pd.DataFrame, split_date: str = VALIDATION_SPLIT) -> dict
             y[test].astype(int), ev.loc[test, "confidence_score"].astype(float)
         )
     )
+    logit = logistic_regression_test(df, ev, train, test, split_date)
     return {
         "status": "ok",
         "split_date": split_date,
@@ -180,4 +285,5 @@ def run_validation(df: pd.DataFrame, split_date: str = VALIDATION_SPLIT) -> dict
         "risk_test": risk_rows,
         "min_calls": min_calls(ev),
         "cohorts": cohorts(df),
+        "logit_test": logit,
     }
