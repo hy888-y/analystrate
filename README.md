@@ -94,17 +94,25 @@ flask --app wsgi copy-db "postgresql://postgres:YOUR_PASSWORD@localhost:5432/ana
 
 then set that URL as `DATABASE_URL` in `backend\.env`.
 
-## 3. Run the website
+## 3. Run the website (every time)
 
-Two terminals:
+Two terminals in VS Code. Type one line at a time (do not paste several lines together).
 
 ```powershell
-# terminal 1
-cd backend; .\.venv\Scripts\Activate.ps1; python wsgi.py     # API on http://127.0.0.1:5000
+# Terminal 1 (backend): from the project folder
+cd backend
+.\.venv\Scripts\Activate.ps1
+python wsgi.py
+# -> "AnalystRate API running on http://127.0.0.1:5000". The window must STAY like this (no new prompt).
 
-# terminal 2
-cd frontend; npm run dev                                       # site on http://localhost:5173
+# Terminal 2 (website): click + in the terminal panel; it opens in the project folder
+cd frontend
+npm run dev
+# -> open http://localhost:5173
 ```
+
+One-time after updating the code: `pip install -r requirements.txt` (adds `waitress`, the server that keeps
+`python wsgi.py` running on Windows). If Terminal 2 opens inside `backend`, use `cd ..\frontend` instead.
 
 ## 4. Public website (IR Objective 4), free
 

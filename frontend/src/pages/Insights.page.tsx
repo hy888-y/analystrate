@@ -73,7 +73,7 @@ export function InsightsPage() {
         </div>
 
         <aside className="panel" style={{ overflow: 'hidden' }}>
-          <div className="ptitle" style={{ background: 'linear-gradient(90deg,var(--navy),#1E4B8F)', color: '#fff', border: 0 }}>Latest rating changes</div>
+          <div className="ptitle">Latest rating changes</div>
           <div className="feed">
             {data.changes.map((c) => (
               <Link key={c.id} to={`/stocks/${c.code}`}>

@@ -48,12 +48,31 @@ def point_in_time_track(df: pd.DataFrame, market_hit: float) -> pd.DataFrame:
     return out
 
 
+def _pit_percentile(series: pd.Series, dates: pd.Series) -> pd.Series:
+    """Percentile rank of each value against only rows whose report_date is on or before
+    its own date — no future information used (IR 2.2.3 point-in-time requirement)."""
+    vals = series.to_numpy(dtype=float)
+    dts = pd.to_datetime(dates).to_numpy().astype("datetime64[D]")
+    result = np.full(len(vals), np.nan)
+    for d in np.unique(dts):
+        pool = vals[dts <= d]
+        pool_valid = pool[~np.isnan(pool)]
+        if not len(pool_valid):
+            continue
+        for i in np.where(dts == d)[0]:
+            if not np.isnan(vals[i]):
+                result[i] = 100.0 * float(np.mean(pool_valid <= vals[i]))
+    return pd.Series(result, index=series.index)
+
+
 def compute_risk(df: pd.DataFrame, market_hit: float) -> pd.DataFrame:
     out = point_in_time_track(df, market_hit)
     entry = out["entry_price"].astype(float).where(lambda x: x > 0)
     out["implied_move"] = (out["target_price"].astype(float) / entry - 1).abs()
-    vol_pct = out["volatility"].astype(float).rank(pct=True) * 100
-    move_pct = out["implied_move"].rank(pct=True) * 100
+    # Point-in-time percentiles: each call ranked only against calls on or before
+    # its own report_date, so no future observations influence a historical risk score.
+    vol_pct = _pit_percentile(out["volatility"].astype(float), out["report_date"])
+    move_pct = _pit_percentile(out["implied_move"], out["report_date"])
 
     scores, levels, comps = [], [], []
     for i, r in out.iterrows():

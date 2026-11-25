@@ -10,3 +10,4 @@ yfinance>=0.2.54
 scikit-learn>=1.5
 pytest>=8.0
 gunicorn>=22.0; platform_system != "Windows"
+waitress>=3.0

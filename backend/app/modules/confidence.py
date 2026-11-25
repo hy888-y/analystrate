@@ -187,7 +187,7 @@ def breakdowns(df: pd.DataFrame, sector_of: dict[int, str | None]) -> dict[int, 
     d = df.assign(sector=df["stock_id"].map(sector_of).fillna("Unclassified"),
                   year=pd.to_datetime(df["report_date"]).dt.year,
                   ev=df["status"] == "evaluated")
-    d["h"] = d["hit"].where(d["ev"]).fillna(False).astype(bool)
+    d["h"] = (d["hit"].astype("boolean").fillna(False).astype(bool) & d["ev"]).astype(bool)
 
     def table(g, key):
         t = g.groupby(key).agg(calls=("id", "size"), evaluated=("ev", "sum"), hits=("h", "sum"))
