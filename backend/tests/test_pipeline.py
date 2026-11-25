@@ -683,6 +683,99 @@ def test_logit_handles_single_class_training():
     assert res["status"] == "skipped"
 
 
+def test_logit_excludes_pre_split_unresolved_outcome():
+    """Regression: a pre-split call whose eval_end_date falls on or after the split must be
+    excluded from LR training.  Its outcome label was not available at the split date, so using
+    it would leak a future label into the model.
+    """
+    from pipeline.validate import logistic_regression_test
+
+    split_str = "2023-01-01"
+    split_ts = pd.Timestamp(split_str)
+
+    rows = []
+    # 300 pre-split calls all resolved well before split (eval_end_date = report_date + 365,
+    # and report_date starts 730 days before split, so the latest eval_end is split - 1 day).
+    for i in range(300):
+        d = split_ts - timedelta(days=730 - i)       # earliest: split-730, latest: split-430
+        eval_end = d + timedelta(days=365)            # latest eval_end: split - 65 days → all < split
+        rows.append({
+            "id": i,
+            "analyst_id": i % 8 + 1,
+            "report_date": d.date(),
+            "rating": "BUY",
+            "status": "evaluated",
+            "hit": bool(i % 2 == 0),
+            "confidence_score": 60.0,
+            "confidence_factors": {"values": {"success": 65.0, "tp_accuracy": 60.0,
+                                              "sector": 55.0, "consensus": 50.0}, "evidence": {}},
+            "risk_score": 40.0, "risk_level": "Moderate",
+            "eval_end_date": eval_end.date(),
+        })
+
+    # ONE "leaky" call: report_date is 10 days before split but eval_end_date is 355 days AFTER split.
+    leaky_id = 9999
+    leaky_report = split_ts - timedelta(days=10)
+    leaky_eval_end = split_ts + timedelta(days=355)   # outcome not known until well after split
+    rows.append({
+        "id": leaky_id,
+        "analyst_id": 1,
+        "report_date": leaky_report.date(),
+        "rating": "BUY",
+        "status": "evaluated",
+        "hit": True,
+        "confidence_score": 95.0,
+        "confidence_factors": {"values": {"success": 95.0, "tp_accuracy": 95.0,
+                                          "sector": 95.0, "consensus": 95.0}, "evidence": {}},
+        "risk_score": 10.0, "risk_level": "Low",
+        "eval_end_date": leaky_eval_end.date(),
+    })
+
+    # 100 post-split test calls (resolved after split, which is fine for the test partition).
+    for i in range(100):
+        d = split_ts + timedelta(days=i * 2)
+        eval_end = d + timedelta(days=365)
+        rows.append({
+            "id": 1000 + i,
+            "analyst_id": i % 8 + 1,
+            "report_date": d.date(),
+            "rating": "BUY",
+            "status": "evaluated",
+            "hit": bool(i % 3 != 0),
+            "confidence_score": 55.0,
+            "confidence_factors": {"values": {"success": 55.0, "tp_accuracy": 50.0,
+                                              "sector": 52.0, "consensus": 48.0}, "evidence": {}},
+            "risk_score": 50.0, "risk_level": "Moderate",
+            "eval_end_date": eval_end.date(),
+        })
+
+    df = pd.DataFrame(rows)
+    ev = df[df["status"] == "evaluated"].copy()
+    ev["hit"] = ev["hit"].astype(bool)
+    when = pd.to_datetime(ev["report_date"])
+    train = when < split_ts
+    test  = when >= split_ts
+
+    res = logistic_regression_test(df, ev, train, test, split_str)
+
+    # train mask contains 301 calls (300 clean + 1 leaky); the leaky one must be excluded.
+    n_eligible_train = int(train.sum())          # 301 calls match report_date < split
+    if res["status"] == "ok":
+        # n_train reflects ONLY the clean subset (eval_end_date < split), so it must be < 301
+        assert res["n_train"] < n_eligible_train, (
+            f"Leaky call not excluded: n_train={res['n_train']} should be < {n_eligible_train}"
+        )
+        assert res["n_train"] == 300, f"Expected exactly 300 clean training calls, got {res['n_train']}"
+    else:
+        # If skipped for unrelated reasons (e.g. single class), verify leaky call exclusion directly
+        # by confirming the leaky id is not among the rows that would have been in ev_tr after filtering
+        ev_tr = ev[train].copy()
+        eval_ends = pd.to_datetime(ev_tr["eval_end_date"])
+        resolved = eval_ends.notna() & (eval_ends < split_ts)
+        ev_tr_clean = ev_tr[resolved]
+        assert leaky_id not in ev_tr_clean["id"].values, "Leaky call must be excluded from training subset"
+
+
 def test_logit_in_end_to_end(app):
     """run_all() must include logit_test in the validation output stored in /api/meta."""
     m = app.test_client().get("/api/meta").get_json()

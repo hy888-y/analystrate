@@ -153,9 +153,21 @@ def logistic_regression_test(df, ev, train, test, split):
     """IR 2.2.5 Part 2: fit a Logistic Regression on the four PIT confidence factors and
     compare its coefficients with the scoring model's equal factor weights.
 
-    Features are the four values from confidence_factors["values"] already stored on each
-    call by call_level_scores() — computed point-in-time with no look-ahead.  The model is
-    trained exclusively on pre-split evaluated calls and tested on post-split evaluated calls.
+    Training eligibility (strict, no temporal leakage):
+      - report_date < split_date  (pre-split recommendation)
+      - eval_end_date < split_date  (outcome was fully resolved before the split — the label
+        was available at the split date and cannot have been influenced by post-split information)
+
+    A pre-split recommendation whose 12-month window ends after the split date would have had
+    an unknown outcome at the split.  Including it in training leaks a future label into the
+    model.  It is excluded from training but is NOT moved to the test set either (its report
+    date is before the split, so it belongs to neither partition).
+
+    Test eligibility:
+      - report_date >= split_date  (post-split recommendation, fully evaluated)
+
+    Features are the four values from confidence_factors["values"] stored on each call by
+    call_level_scores() — computed strictly point-in-time with no look-ahead.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
@@ -175,7 +187,19 @@ def logistic_regression_test(df, ev, train, test, split):
                 rows.append([None] * len(factor_keys))
         return pd.DataFrame(rows, columns=factor_keys, index=subset.index).astype(float)
 
-    ev_tr, ev_te = ev[train], ev[test]
+    # Base partitions from run_validation: report_date before / on-or-after split.
+    ev_tr = ev[train].copy()
+    ev_te = ev[test]
+
+    # Stricter training gate: exclude pre-split calls whose outcome was not yet known at split time.
+    # eval_end_date is the last day of the 12-month window; if it falls on or after the split date
+    # the outcome label was not available to a model trained at that point.
+    split_ts = pd.Timestamp(split)
+    if "eval_end_date" in ev_tr.columns:
+        eval_ends = pd.to_datetime(ev_tr["eval_end_date"])
+        resolved_before_split = eval_ends.notna() & (eval_ends < split_ts)
+        ev_tr = ev_tr[resolved_before_split]
+
     X_tr_raw, X_te_raw = _features(ev_tr), _features(ev_te)
 
     ok_tr = X_tr_raw.notna().all(axis=1)
@@ -231,8 +255,8 @@ def logistic_regression_test(df, ev, train, test, split):
 
     return {
         "status": "ok",
-        "n_train": int(len(X_tr)),
-        "n_test": int(len(X_te)),
+        "n_train": int(len(X_tr)),       # pre-split calls with eval_end_date < split and valid features
+        "n_test": int(len(X_te)),         # post-split calls with valid features
         "features": factor_keys,
         "metrics": {
             "auc": auc, "accuracy": acc, "precision": prec, "recall": rec,
