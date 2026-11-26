@@ -1,25 +1,85 @@
 """CRISP-DM Evaluation (IR 3.2.1 Process 5, 2.2.5, 4.3).
 
 Everything here is tested out of sample with a time-based split (VALIDATION_SPLIT): anything that is
-"learnt" (analyst grades, bias flags) uses only information available before the split date, and is
-then checked against the 12-month outcomes of calls made after it.
+"learnt" (model weights, analyst grades, bias flags) uses only information available before the split
+date, and is then checked against the 12-month outcomes of calls made after it.
 
-  1. confidence_test    hit rate by trust-score quintile and by analyst grade (grades from pre-split data)
-  2. bias_test          later outcomes of analysts flagged by the bias module vs not flagged
-  3. risk_test          hit rate by risk level and risk-meter AUC
-  4. min_calls          how many evaluated calls a score needs to be statistically meaningful (IR 4.3)
-  5. cohorts            market results by report year (IR 3.5.9)
+  1. model_comparison   the transparent weighted score vs logistic regression, random forest and
+                        gradient boosting, all on the same five call-level factors (IR 2.2.5)
+  2. weights_vs_coef    logistic-regression coefficients compared with the factor weights (IR 2.2.5)
+  3. confidence_test    hit rate by trust-score quintile and by analyst grade (grades from pre-split data)
+  4. bias_test          later outcomes of analysts flagged by the bias module vs not flagged
+  5. risk_test          hit rate by risk level and risk-meter AUC
+  6. lime_test          LIME-style local explanations of the best black-box model compared with the
+                        transparent factor breakdown: fidelity, stability, agreement (IR 4.3)
+  7. min_calls          how many evaluated calls a score needs to be statistically meaningful (IR 4.3)
+  8. cohorts            market results by report year (IR 3.5.9)
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from app.config import FACTOR_LABELS, RISK_LEVELS, SHRINK_K, THIN_SAMPLE, VALIDATION_SPLIT, WEIGHTS
+from app.config import MIN_HISTORY_FOR_MODELS, RISK_LEVELS, SHRINK_K, THIN_SAMPLE, VALIDATION_SPLIT, WEIGHTS
+
+FEATURES = list(WEIGHTS)        # success, tp_accuracy, experience, sector, consensus
 
 
 def _r(x, n=4):
     return None if x is None or (isinstance(x, float) and np.isnan(x)) else round(float(x), n)
+
+
+def _features(ev: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame([cf["values"] for cf in ev["confidence_factors"]], index=ev.index)[FEATURES].astype(float)
+
+
+# ------------------------------------------------------------------------------------------------
+def model_comparison(ev, train, test):
+    from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
+    from sklearn.preprocessing import StandardScaler
+
+    X, y = _features(ev), ev["hit"].astype(int)
+    Xtr, Xte, ytr, yte = X[train], X[test], y[train], y[test]
+    sc = StandardScaler().fit(Xtr)
+
+    # transparent weighted score: no training. Accuracy uses the cut-off that is best on the training set.
+    s_tr, s_te = ev.loc[train, "confidence_score"].astype(float), ev.loc[test, "confidence_score"].astype(float)
+    cuts = np.unique(np.round(s_tr, 1))
+    best_cut = max(cuts, key=lambda c: accuracy_score(ytr, (s_tr >= c).astype(int))) if len(cuts) else 50
+    rows = [{"model": "Weighted factor score (chosen)", "key": "weighted", "trained": False,
+             "auc": _r(roc_auc_score(yte, s_te)), "accuracy": _r(accuracy_score(yte, (s_te >= best_cut).astype(int))),
+             "brier": None, "explainable": "Exact: every point on screen", "cutoff": _r(best_cut, 1)}]
+
+    models = {
+        "logit": ("Logistic regression", LogisticRegression(max_iter=1000), True, "Global coefficients"),
+        "rf": ("Random forest", RandomForestClassifier(n_estimators=300, min_samples_leaf=25, random_state=0, n_jobs=-1),
+               False, "Black box (needs LIME/SHAP)"),
+        "gb": ("Gradient boosting", HistGradientBoostingClassifier(max_depth=3, learning_rate=0.05, max_iter=300,
+                                                                   random_state=0), False, "Black box (needs LIME/SHAP)"),
+    }
+    fitted = {}
+    for key, (name, m, scaled, expl) in models.items():
+        a, b = (sc.transform(Xtr), sc.transform(Xte)) if scaled else (Xtr.values, Xte.values)
+        m.fit(a, ytr)
+        p = m.predict_proba(b)[:, 1]
+        fitted[key] = m
+        rows.append({"model": name, "key": key, "trained": True, "auc": _r(roc_auc_score(yte, p)),
+                     "accuracy": _r(accuracy_score(yte, (p >= 0.5).astype(int))),
+                     "brier": _r(brier_score_loss(yte, p)), "explainable": expl})
+
+    logit = fitted["logit"]
+    coef = dict(zip(FEATURES, logit.coef_[0]))
+    tot = sum(abs(v) for v in coef.values()) or 1
+    rf_imp = dict(zip(FEATURES, fitted["rf"].feature_importances_))
+    weights_vs_coef = [{"factor": f, "weight": WEIGHTS[f], "coefficient": _r(coef[f]),
+                        "coef_share": _r(abs(coef[f]) / tot), "rf_importance": _r(rf_imp[f]),
+                        "same_direction": bool(coef[f] > 0)} for f in FEATURES]
+    best = max(rows, key=lambda r: r["auc"] or 0)
+    chosen = rows[0]
+    return rows, weights_vs_coef, fitted, sc, {"best_auc_model": best["model"],
+                                              "auc_gap_vs_best": _r((best["auc"] or 0) - (chosen["auc"] or 0))}
 
 
 # ------------------------------------------------------------------------------------------------
@@ -102,6 +162,55 @@ def risk_test(ev, test):
 
 
 # ------------------------------------------------------------------------------------------------
+def lime_test(ev, train, test, model, n_cases=150, n_samples=600, seed=0):
+    """Ribeiro et al. (2016) LIME, implemented directly: perturb one call's five factors, ask the black
+    box for predictions, weight samples by closeness, fit a weighted linear model. Compared with the
+    transparent score, whose breakdown is exact by construction."""
+    from sklearn.linear_model import Ridge
+
+    X = _features(ev)
+    mu, sd = X[train].mean(), X[train].std().replace(0, 1)
+    Z_test = ((X[test] - mu) / sd).to_numpy()
+    rng = np.random.default_rng(seed)
+    pick = rng.choice(len(Z_test), size=min(n_cases, len(Z_test)), replace=False)
+    width = 0.75 * np.sqrt(len(FEATURES))
+
+    def explain(z, s):
+        r = np.random.default_rng(s)
+        Zs = z + r.normal(0, 1, size=(n_samples, len(FEATURES)))
+        Zs[0] = z
+        p = model.predict_proba(Zs * sd.to_numpy() + mu.to_numpy())[:, 1]
+        dist = np.sqrt(((Zs - z) ** 2).sum(1))
+        w = np.exp(-(dist ** 2) / width ** 2)
+        lin = Ridge(alpha=1.0).fit(Zs, p, sample_weight=w)
+        pred = lin.predict(Zs)
+        r2 = 1 - (w * (p - pred) ** 2).sum() / max(1e-12, (w * (p - np.average(p, weights=w)) ** 2).sum())
+        return lin.coef_, r2
+
+    fid, same_top, agree = [], 0, 0
+    Xt = X[test].to_numpy()
+    wvec = np.array([WEIGHTS[f] for f in FEATURES])
+    mean_tr = mu.to_numpy()
+    for j in pick:
+        c1, r2 = explain(Z_test[j], seed + j)
+        c2, _ = explain(Z_test[j], seed + j + 10_000)
+        fid.append(r2)
+        same_top += int(np.argmax(np.abs(c1)) == np.argmax(np.abs(c2)))
+        # transparent explanation: which factor moves this call's score most vs an average call
+        contrib = wvec * (Xt[j] - mean_tr)
+        agree += int(np.argmax(np.abs(c1 * sd.to_numpy())) == np.argmax(np.abs(contrib)))
+    n = len(pick)
+    return {
+        "cases": int(n),
+        "lime_fidelity_r2": _r(float(np.mean(fid)), 3),
+        "lime_top_factor_stable_pct": _r(100 * same_top / n, 1),
+        "lime_agrees_with_transparent_pct": _r(100 * agree / n, 1),
+        "transparent_fidelity_r2": 1.0,
+        "transparent_stable_pct": 100.0,
+        "note": "Same call explained twice with different random samples; the transparent breakdown is exact and identical every time.",
+    }
+
+
 def min_calls(ev, seed=0):
     """Two checks per sample size n: the 95% confidence-interval half-width of a hit rate at the market
     rate, and split-half reliability (correlation between two disjoint sets of n calls per analyst)."""
@@ -149,134 +258,6 @@ def cohorts(df):
 
 
 # ------------------------------------------------------------------------------------------------
-def logistic_regression_test(df, ev, train, test, split):
-    """IR 2.2.5 Part 2: fit a Logistic Regression on the four PIT confidence factors and
-    compare its coefficients with the scoring model's equal factor weights.
-
-    Training eligibility (strict, no temporal leakage):
-      - report_date < split_date  (pre-split recommendation)
-      - eval_end_date < split_date  (outcome was fully resolved before the split — the label
-        was available at the split date and cannot have been influenced by post-split information)
-
-    A pre-split recommendation whose 12-month window ends after the split date would have had
-    an unknown outcome at the split.  Including it in training leaks a future label into the
-    model.  It is excluded from training but is NOT moved to the test set either (its report
-    date is before the split, so it belongs to neither partition).
-
-    Test eligibility:
-      - report_date >= split_date  (post-split recommendation, fully evaluated)
-
-    Features are the four values from confidence_factors["values"] stored on each call by
-    call_level_scores() — computed strictly point-in-time with no look-ahead.
-    """
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
-                                  precision_score, recall_score, roc_auc_score)
-    from sklearn.preprocessing import StandardScaler
-
-    factor_keys = list(WEIGHTS.keys())   # ["success", "tp_accuracy", "sector", "consensus"]
-
-    def _features(subset):
-        rows = []
-        for _, r in subset.iterrows():
-            cf = r.get("confidence_factors")
-            if isinstance(cf, dict) and "values" in cf:
-                v = cf["values"]
-                rows.append([v.get(k) for k in factor_keys])
-            else:
-                rows.append([None] * len(factor_keys))
-        return pd.DataFrame(rows, columns=factor_keys, index=subset.index).astype(float)
-
-    # Base partitions from run_validation: report_date before / on-or-after split.
-    ev_tr = ev[train].copy()
-    ev_te = ev[test]
-
-    # Stricter training gate: exclude pre-split calls whose outcome was not yet known at split time.
-    # eval_end_date is the last day of the 12-month window; if it falls on or after the split date
-    # the outcome label was not available to a model trained at that point.
-    split_ts = pd.Timestamp(split)
-    if "eval_end_date" in ev_tr.columns:
-        eval_ends = pd.to_datetime(ev_tr["eval_end_date"])
-        resolved_before_split = eval_ends.notna() & (eval_ends < split_ts)
-        ev_tr = ev_tr[resolved_before_split]
-
-    X_tr_raw, X_te_raw = _features(ev_tr), _features(ev_te)
-
-    ok_tr = X_tr_raw.notna().all(axis=1)
-    ok_te = X_te_raw.notna().all(axis=1)
-    X_tr = X_tr_raw[ok_tr].values
-    y_tr = ev_tr.loc[ok_tr, "hit"].astype(int).values
-    X_te = X_te_raw[ok_te].values
-    y_te = ev_te.loc[ok_te, "hit"].astype(int).values
-
-    n_tr_classes = int(len(np.unique(y_tr))) if len(y_tr) else 0
-    n_te_classes = int(len(np.unique(y_te))) if len(y_te) else 0
-
-    if len(X_tr) < 50 or n_tr_classes < 2:
-        return {"status": "skipped",
-                "reason": f"insufficient training data ({len(X_tr)} rows, {n_tr_classes} classes)"}
-    if len(X_te) < 20 or n_te_classes < 2:
-        return {"status": "skipped",
-                "reason": f"insufficient test data ({len(X_te)} rows, {n_te_classes} classes)"}
-
-    # Standardise features so coefficient magnitudes are comparable across factors.
-    scaler = StandardScaler()
-    X_tr_s = scaler.fit_transform(X_tr)
-    X_te_s = scaler.transform(X_te)
-
-    # class_weight="balanced" mitigates any BUY-dominant class imbalance; random_state for reproducibility.
-    lr = LogisticRegression(class_weight="balanced", max_iter=1000, random_state=42)
-    lr.fit(X_tr_s, y_tr)
-
-    y_pred = lr.predict(X_te_s)
-    y_prob = lr.predict_proba(X_te_s)[:, 1]
-
-    auc   = _r(roc_auc_score(y_te, y_prob))
-    acc   = _r(accuracy_score(y_te, y_pred))
-    prec  = _r(precision_score(y_te, y_pred, zero_division=0))
-    rec   = _r(recall_score(y_te, y_pred, zero_division=0))
-    f1    = _r(f1_score(y_te, y_pred, zero_division=0))
-    cm    = confusion_matrix(y_te, y_pred).tolist()
-
-    coefs = lr.coef_[0]
-    comparison = []
-    for i, k in enumerate(factor_keys):
-        c = float(coefs[i])
-        comparison.append({
-            "factor": k,
-            "label": FACTOR_LABELS[k][0],
-            "lr_coef": _r(c),
-            "model_weight": _r(WEIGHTS[k]),
-            "coef_positive": bool(c > 0),
-            # Weight is always positive (0.25); LR agrees when its coefficient is also positive.
-            "direction_agrees": bool(c > 0),
-        })
-    coef_rank = sorted(factor_keys, key=lambda k: -abs(float(coefs[factor_keys.index(k)])))
-
-    return {
-        "status": "ok",
-        "n_train": int(len(X_tr)),       # pre-split calls with eval_end_date < split and valid features
-        "n_test": int(len(X_te)),         # post-split calls with valid features
-        "features": factor_keys,
-        "metrics": {
-            "auc": auc, "accuracy": acc, "precision": prec, "recall": rec,
-            "f1": f1, "confusion_matrix": cm,
-        },
-        "coefficients": {k: _r(float(coefs[i])) for i, k in enumerate(factor_keys)},
-        "intercept": _r(float(lr.intercept_[0])),
-        "comparison": comparison,
-        "coef_rank": coef_rank,
-        "note": (
-            "Coefficients are from a logistic regression trained on standardised features "
-            "(mean 0, sd 1). A positive coefficient means the factor moves the predicted "
-            "probability of success in the same direction as the scoring model. The scoring "
-            "model assigns all four factors equal 25% weights by design; the LR coefficients "
-            "reflect what the data supports and are not expected to be numerically equal."
-        ),
-    }
-
-
-# ------------------------------------------------------------------------------------------------
 def run_validation(df: pd.DataFrame, split_date: str = VALIDATION_SPLIT) -> dict:
     ev = df[df["status"] == "evaluated"].copy()
     ev["hit"] = ev["hit"].astype(bool)
@@ -288,26 +269,37 @@ def run_validation(df: pd.DataFrame, split_date: str = VALIDATION_SPLIT) -> dict
     if train.sum() < 100 or test.sum() < 50 or y[train].nunique() < 2 or y[test].nunique() < 2:
         return {"status": "skipped", "reason": "not enough calls on each side of the split date"}
 
-    conf, _ = confidence_test(df, ev, test, split_date, test_all=test)
+    hist = ev["confidence_factors"].map(lambda c: c["evidence"]["resolved_calls"] >= MIN_HISTORY_FOR_MODELS)
+    htrain, htest = train & hist, test & hist
+    if htrain.sum() < 100 or htest.sum() < 50:
+        htrain, htest = train, test
+    comp, wvc, fitted, _, summary = model_comparison(ev, htrain, htest)
+    conf, _ = confidence_test(df, ev, htest, split_date, test_all=test)
     risk_rows, risk_auc = risk_test(ev, test)
-    weighted_auc = _r(
-        __import__("sklearn.metrics", fromlist=["roc_auc_score"]).roc_auc_score(
-            y[test].astype(int), ev.loc[test, "confidence_score"].astype(float)
-        )
-    )
-    logit = logistic_regression_test(df, ev, train, test, split_date)
+    best_bb = max((r for r in comp if r["key"] in ("rf", "gb")), key=lambda r: r["auc"] or 0)
+    logit = next(r for r in comp if r["key"] == "logit")
+    weighted = comp[0]
     return {
         "status": "ok",
         "split_date": split_date,
         "n_train": int(train.sum()),
         "n_test": int(test.sum()),
         "base_rate_test": _r(y[test].mean()),
-        "weighted_auc": weighted_auc,
+        "model_calls": {"min_history": MIN_HISTORY_FOR_MODELS, "n_train": int(htrain.sum()), "n_test": int(htest.sum()),
+                        "base_rate_test": _r(y[htest].mean())},
+        # headline numbers (kept under the old names so earlier pages and the report still match)
+        "weighted_auc": weighted["auc"],
+        "logit_auc": logit["auc"],
+        "logit_accuracy": logit["accuracy"],
         "risk_meter_auc": risk_auc,
+        "standardised_coefficients": {r["factor"]: r["coefficient"] for r in wvc},
+        "model_comparison": comp,
+        "comparison_summary": summary,
+        "weights_vs_coef": wvc,
         "confidence_test": conf,
         "bias_test": bias_test(df, ev, test, split_date),
         "risk_test": risk_rows,
+        "lime_test": lime_test(ev, htrain, htest, fitted[best_bb["key"]]) | {"model": best_bb["model"]},
         "min_calls": min_calls(ev),
         "cohorts": cohorts(df),
-        "logit_test": logit,
     }

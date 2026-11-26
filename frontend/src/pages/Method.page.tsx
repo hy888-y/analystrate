@@ -1,11 +1,17 @@
-﻿import { useApi, type Meta } from '../api';
+import { useApi, type Meta } from '../api';
 import { ErrorBox, GradeChip, Loading } from '../components/ui';
 import { day, pct } from '../format';
 
 const RISK_LABELS: Record<string, string> = {
-  track: "Analyst's stock-specific track record known at the call date (inverse)",
+  track: 'Analyst’s stock-specific track record known at the call date (inverse)',
   volatility: 'Stock price volatility, trailing 1 year (percentile)',
-  confidence: "Call trust score (inverted): 100 minus the call's own trust score — a low-trust call contributes more risk",
+  implied_move: 'Size of the promised target move (percentile)',
+  confidence: 'The call’s own trust score (inverse)',
+  alignment: 'Score alignment: share of other analysts holding the same view (inverse)',
+};
+const FACTOR_NAMES: Record<string, string> = {
+  success: 'Historical success rate', tp_accuracy: 'Target price accuracy', experience: 'Experience depth',
+  sector: 'Sector consistency', consensus: 'Consensus consistency',
 };
 const RISK_COLOR: Record<string, string> = { Low: '#089981', Moderate: '#8DB33A', Elevated: '#F5A524', High: '#F23645' };
 
@@ -43,7 +49,7 @@ export function MethodPage() {
     <div className="page">
       <div className="ph">
         <div>
-          <h1>How it's scored, and how well it works</h1>
+          <h1>How it’s scored, and how well it works</h1>
           <p>CRISP-DM Modelling and Evaluation. Every number on this page is produced by the backend pipeline from the cleaned dataset and Yahoo Finance prices.</p>
         </div>
       </div>
@@ -58,8 +64,8 @@ export function MethodPage() {
             ))}
           </tbody></table></div>
           <div className="pad mini">
-            <p><b>Analyst score</b>: the factors over all of an analyst's scored calls; small records are shrunk toward the market rate. Grades: top 20% A, next 30% B, next 30% C, bottom 20% D.</p>
-            <p><b>Trust score of each call</b>: the same four factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts' views in the previous 90 days).</p>
+            <p><b>Analyst score</b>: the factors over all of an analyst’s scored calls; small records are shrunk toward the market rate. Grades: top 20% A, next 30% B, next 30% C, bottom 20% D.</p>
+            <p><b>Trust score of each call</b>: the same five factors and weights, measured only from what was known on the call date (earlier calls that had already reached 12 months, and other analysts’ views in the previous 90 days).</p>
           </div>
         </section>
 
@@ -80,16 +86,16 @@ export function MethodPage() {
           <div className="pad mini">
             <p>BUY is a hit if the price is higher 12 months after the report; SELL if it is lower; HOLD if it moved less than ±10%.</p>
             <p>Target price accuracy = |price after 12 months − target| ÷ price at the call (capped at 100%).</p>
-            <p>Targets are put on the same basis as Yahoo prices using recorded stock splits. A delisted or suspended stock is scored at its last traded price. Calls younger than 12 months stay "in window".</p>
+            <p>Targets are put on the same basis as Yahoo prices using recorded stock splits. A delisted or suspended stock is scored at its last traded price. Calls younger than 12 months stay “in window”.</p>
           </div>
         </section>
 
         <section className="panel">
           <div className="ptitle">Module 2 · Analyst Bias Detection <span>compared with the market</span></div>
           <div className="pad mini">
-            <p><b>Optimism bias</b>: buy share more than 10 points above the market's.</p>
-            <p><b>Sell avoidance</b>: sell share under half the market's.</p>
-            <p><b>Inflated targets</b>: the average deviation of BUY targets from the realised 12-month price is 8+ points above the market's.</p>
+            <p><b>Optimism bias</b>: buy share more than 10 points above the market’s.</p>
+            <p><b>Sell avoidance</b>: sell share under half the market’s.</p>
+            <p><b>Inflated targets</b>: the average deviation of BUY targets from the realised 12-month price is 8+ points above the market’s.</p>
             {m.market_bias && <p>Market today: {pct(m.market_bias.buy_share)} BUY · {pct(m.market_bias.sell_share)} SELL · {m.market_bias.buy_to_sell?.toFixed(1)} : 1 · average BUY target overshoot {pct(m.market_bias.tp_overshoot)}.</p>}
           </div>
         </section>
@@ -105,12 +111,52 @@ export function MethodPage() {
             checked on the {v.n_test?.toLocaleString()} calls made after that date ({v.n_train?.toLocaleString()} before). Base hit rate in the test period: {pct(base)}.
           </p>
           <div className="kv panel" style={{ marginBottom: 18 }}>
-            <div><b className="num">{v.weighted_auc?.toFixed(3)}</b><span>Trust score AUC</span></div>
+            <div><b className="num">{v.weighted_auc?.toFixed(3)}</b><span>Trust score AUC (chosen model)</span></div>
+            <div><b className="num">{v.logit_auc?.toFixed(3)}</b><span>Logistic regression AUC</span></div>
             <div><b className="num">{v.risk_meter_auc?.toFixed(3)}</b><span>Risk meter AUC</span></div>
             <div><b className="num">{v.n_test?.toLocaleString()}</b><span>test calls</span></div>
           </div>
 
           <div className="cols2">
+            <section className="panel">
+              <div className="ptitle">Model comparison <span>same five factors · {v.model_calls?.n_test.toLocaleString()} test calls with history</span></div>
+              <div className="tbl"><table className="wrap">
+                <thead><tr><th>MODEL</th><th>AUC</th><th>ACCURACY</th><th>BRIER</th><th>EXPLAINABLE TO AN INVESTOR</th></tr></thead>
+                <tbody>
+                  {v.model_comparison?.map((r) => (
+                    <tr key={r.key} style={r.key === 'weighted' ? { background: 'var(--sky)' } : undefined}>
+                      <td><b>{r.model}</b></td><td className="num">{r.auc?.toFixed(3)}</td><td className="num">{r.accuracy?.toFixed(3) ?? '–'}</td>
+                      <td className="num">{r.brier?.toFixed(3) ?? '–'}</td><td style={{ whiteSpace: 'normal' }}>{r.explainable}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+              <div className="pad mini">
+                <p>Calls whose analyst already had {v.model_calls?.min_history ?? 1}+ scored call on the call date ({v.model_calls?.n_train.toLocaleString()} train / {v.model_calls?.n_test.toLocaleString()} test); before that every factor is only the market default. AUC 0.5 = no better than chance. Best AUC: {v.comparison_summary?.best_auc_model} ({v.comparison_summary && v.comparison_summary.auc_gap_vs_best > 0 ? `${v.comparison_summary.auc_gap_vs_best.toFixed(3)} above` : 'equal to'} the weighted score).
+                  The weighted score is kept because its explanation on screen is exact, which the black-box models cannot give (Rudin, 2019).</p>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="ptitle">Factor weights vs logistic regression <span>do both approaches agree?</span></div>
+              <div className="tbl"><table className="wrap">
+                <thead><tr><th>FACTOR</th><th>WEIGHT</th><th>LOGIT COEF.</th><th>COEF. SHARE</th><th>RF IMPORTANCE</th><th>DIRECTION</th></tr></thead>
+                <tbody>
+                  {v.weights_vs_coef?.map((r) => (
+                    <tr key={r.factor}>
+                      <td><b>{FACTOR_NAMES[r.factor] ?? r.factor}</b></td>
+                      <td className="num">{Math.round(r.weight * 100)}%</td>
+                      <td className="num">{r.coefficient.toFixed(3)}</td>
+                      <td className="num">{(r.coef_share * 100).toFixed(0)}%</td>
+                      <td className="num">{(r.rf_importance * 100).toFixed(0)}%</td>
+                      <td>{r.same_direction ? <span className="ok" title="positive, same as the weight">✓ +</span> : <span className="no" title="negative, opposite to the weight">✗ −</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+              <div className="pad mini"><p>Coefficients are standardised (one standard deviation of each factor). “Coef. share” = |coefficient| ÷ the sum of all |coefficients|, to put it on the same scale as the weights.</p></div>
+            </section>
+
             <section className="panel">
               <div className="ptitle">Module 1 check: does a higher trust score mean more calls played out? <span>test calls with history</span></div>
               <Bars base={base} rows={(v.confidence_test?.by_quintile ?? []).map((q) => ({
@@ -148,12 +194,27 @@ export function MethodPage() {
                   )))}
                 </tbody>
               </table></div>
-              <div className="tblnote">Bold = the behaviour each flag measures. "Persists" = the flagged group still shows more of it after the split date.</div>
+              <div className="tblnote">Bold = the behaviour each flag measures. “Persists” = the flagged group still shows more of it after the split date.</div>
             </section>
+
+            {v.lime_test && (
+              <section className="panel">
+                <div className="ptitle">Explainability: transparent factors vs LIME <span>{v.lime_test.cases} test calls · {v.lime_test.model}</span></div>
+                <div className="tbl"><table className="wrap">
+                  <thead><tr><th>CHECK</th><th>TRANSPARENT SCORE</th><th>LIME ON BLACK BOX</th></tr></thead>
+                  <tbody>
+                    <tr><td>Fidelity (R² of the explanation)</td><td className="num ok">{v.lime_test.transparent_fidelity_r2.toFixed(2)}</td><td className="num">{v.lime_test.lime_fidelity_r2.toFixed(2)}</td></tr>
+                    <tr><td>Same top factor when explained twice</td><td className="num ok">{v.lime_test.transparent_stable_pct}%</td><td className="num">{v.lime_test.lime_top_factor_stable_pct}%</td></tr>
+                    <tr><td>Top factor agrees with the transparent one</td><td className="num">–</td><td className="num">{v.lime_test.lime_agrees_with_transparent_pct}%</td></tr>
+                  </tbody>
+                </table></div>
+                <div className="pad mini"><p>LIME (Ribeiro et al., 2016) fits a local linear model around each call. {v.lime_test.note}</p></div>
+              </section>
+            )}
 
             {v.min_calls && (
               <section className="panel">
-                <div className="ptitle">How many scored calls make a score meaningful? <span>"thin sample" below {v.min_calls.threshold_used}</span></div>
+                <div className="ptitle">How many scored calls make a score meaningful? <span>“thin sample” below {v.min_calls.threshold_used}</span></div>
                 <div className="tbl"><table className="wrap">
                   <thead><tr><th>CALLS (n)</th><th>95% CI OF A HIT RATE</th><th>RELIABILITY</th><th>ANALYSTS WITH 2n</th></tr></thead>
                   <tbody>
@@ -165,7 +226,7 @@ export function MethodPage() {
                     ))}
                   </tbody>
                 </table></div>
-                <div className="pad mini"><p>Reliability = split-half correlation of two disjoint sets of n calls (Spearman–Brown corrected). Rule: {v.min_calls.rule} → <b>{v.min_calls.suggested ?? '–'}</b> calls. Below that, the score leans on the market average (shrinkage k = 20) and shows a "Thin sample" tag.</p></div>
+                <div className="pad mini"><p>Reliability = split-half correlation of two disjoint sets of n calls (Spearman–Brown corrected). Rule: {v.min_calls.rule} → <b>{v.min_calls.suggested ?? '–'}</b> calls. Below that, the score leans on the market average (shrinkage k = 20) and shows a “Thin sample” tag.</p></div>
               </section>
             )}
           </div>
@@ -187,43 +248,8 @@ export function MethodPage() {
         </>
       )}
 
-      {v.logit_test && (
-        <section className="panel" style={{ marginTop: 18 }}>
-          <div className="ptitle">IR 2.2.5 · Logistic Regression validation <span>pre-split training only · features: 4 point-in-time trust-score factors</span></div>
-          {v.logit_test.status !== 'ok' ? (
-            <div className="pad mini"><p>Not run: {v.logit_test.reason ?? v.logit_test.status}</p></div>
-          ) : (
-            <>
-              <div className="kv panel" style={{ marginBottom: 0 }}>
-                <div><b className="num">{v.logit_test.metrics?.auc?.toFixed(3)}</b><span>ROC-AUC</span></div>
-                <div><b className="num">{v.logit_test.metrics?.accuracy?.toFixed(3)}</b><span>Accuracy</span></div>
-                <div><b className="num">{v.logit_test.metrics?.precision?.toFixed(3)}</b><span>Precision</span></div>
-                <div><b className="num">{v.logit_test.metrics?.recall?.toFixed(3)}</b><span>Recall</span></div>
-                <div><b className="num">{v.logit_test.metrics?.f1?.toFixed(3)}</b><span>F1</span></div>
-              </div>
-              <div className="ptitle" style={{ borderTop: '1px solid var(--line)' }}>Coefficient vs factor weight comparison <span>standardised features · IR 2.2.5</span></div>
-              <div className="tbl"><table className="wrap">
-                <thead><tr><th>FACTOR</th><th>LR COEFFICIENT</th><th>MODEL WEIGHT</th><th>DIRECTION</th></tr></thead>
-                <tbody>
-                  {v.logit_test.comparison?.map((c) => (
-                    <tr key={c.factor}>
-                      <td>{c.label}</td>
-                      <td className="num">{c.lr_coef?.toFixed(4)}</td>
-                      <td className="num">{c.model_weight?.toFixed(4)}</td>
-                      <td>{c.direction_agrees ? <span className="ok">&#x2713; positive</span> : <span className="no">&#x2717; negative</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
-              {v.logit_test.note && <div className="pad mini"><p className="mu">{v.logit_test.note}</p></div>}
-              <div className="tblnote">{v.logit_test.n_train?.toLocaleString()} training calls · {v.logit_test.n_test?.toLocaleString()} test calls</div>
-            </>
-          )}
-        </section>
-      )}
-
       <section className="panel" style={{ marginTop: 18 }}>
-        <div className="ptitle">Usability feedback from visitors <span>the "Rate this page" button, 1–5</span></div>
+        <div className="ptitle">Usability feedback from visitors <span>the “Rate this page” button, 1–5</span></div>
         {fb.data && fb.data.responses > 0 ? (
           <div className="tbl"><table className="wrap">
             <thead><tr><th>PAGE</th><th>RESPONSES</th><th>EASY TO UNDERSTAND</th><th>HELPS DECIDE WHOM TO TRUST</th></tr></thead>

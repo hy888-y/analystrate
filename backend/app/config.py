@@ -32,22 +32,22 @@ EVAL_MONTHS = 12            # 12-month target-price horizon used by Malaysian br
 HOLD_BAND = 0.10            # HOLD is a hit if |12m return| <= 10%
 PRICE_MATCH_DAYS = 7        # nearest trading day must be within 7 calendar days
 
-# ---------- Explainable Confidence Score (Proposal Section 3: four equal factors) ----------
+# ---------- Explainable Confidence Score (IR 2.2.4 / 2.2.5) ----------
 # Transparent weighted-factor model. Weights sum to 1.0.
-# CRISP-DM evaluation tests confidence score AUC and hit rate by quintile (pipeline/validate.py).
-# Experience depth is tracked as metadata (thin_sample flag, n_evaluated) but does NOT
-# independently contribute to the score per the approved FYP proposal.
+# Part 2 evaluation compares these against logistic-regression coefficients (pipeline/validate.py).
 WEIGHTS = {
-    "success":     0.25,  # historical recommendation outcome performance
-    "tp_accuracy": 0.25,  # target price realism vs actual 12-month outcome
-    "sector":      0.25,  # analyst's performance in the relevant sector
-    "consensus":   0.25,  # consistency with peer analyst views (proxy for market sentiment)
+    "success": 0.30,      # historical success rate (shrunk toward market mean)
+    "tp_accuracy": 0.25,  # target price accuracy
+    "experience": 0.15,   # depth of evaluated track record
+    "sector": 0.15,       # success inside the analyst's main sector
+    "consensus": 0.15,    # agreement with peers on the same stock
 }
 FACTOR_LABELS = {
-    "success":     ("Historical success rate",      "Share of evaluated calls that played out as stated"),
-    "tp_accuracy": ("Target price realism",         "How close targets landed to the 12-month price"),
-    "sector":      ("Sector expertise alignment",   "Hit rate inside the analyst's main sector"),
-    "consensus":   ("Market sentiment consistency", "Consistency with peer analyst views on the same stock (proxy for market sentiment)"),
+    "success": ("Historical success rate", "Share of evaluated calls that played out as stated"),
+    "tp_accuracy": ("Target price accuracy", "How close targets landed to the 12-month price"),
+    "experience": ("Experience depth", "Number of evaluated calls (log-scaled)"),
+    "sector": ("Sector consistency", "Hit rate inside the analyst's main sector"),
+    "consensus": ("Consensus consistency", "Agreement with other analysts on the same stock"),
 }
 SHRINK_K = 20               # Bayesian shrinkage: a thin record is pulled toward the market hit rate
 THIN_SAMPLE = 30            # fewer evaluated calls than this -> "thin sample" tag
@@ -58,20 +58,22 @@ BIAS_BUY_EXCESS_PTS = 10.0       # buy share > market + 10 pts -> optimism bias
 BIAS_SELL_RATIO = 0.5            # sell share < 50% of market -> sell avoidance
 BIAS_TP_EXCESS_PTS = 8.0         # BUY target overshoot > market + 8 pts -> inflated targets
 
-# ---------- Recommendation Risk Meter (Proposal Section 4: three equal components) ----------
-# Stock-specific track record, price volatility, and confidence score alignment. Weights sum to 1.0.
-# Implied-move and independent consensus-alignment components removed per approved proposal.
-_THIRD = 1.0 / 3.0
-RISK_WEIGHTS = {"track": _THIRD, "volatility": _THIRD, "confidence": _THIRD}
+# ---------- Recommendation Risk Meter (IR 2.2.3) ----------
+# IR 2.2.3: stock-specific track record, price volatility and score alignment, plus the size of the
+# promised move and the call's own trust score. Weights sum to 1.0.
+RISK_WEIGHTS = {"track": 0.30, "volatility": 0.25, "implied_move": 0.15, "confidence": 0.15, "alignment": 0.15}
 RISK_LEVELS = [(35, "Low"), (50, "Moderate"), (65, "Elevated"), (101, "High")]
 VOL_LOOKBACK_DAYS = 252     # trailing trading days used for volatility at the call date
 MIN_STOCK_TRACK = 3         # need >=3 earlier evaluated calls on the stock to use stock-level record
 
 # ---------- CRISP-DM Evaluation (IR 3.2.1 Process 5, 2.2.5) ----------
-# Time-based split: grades and bias flags are built only from information before this date and tested
-# on calls made after it. The dataset is mostly 2023-2026, so the first calls with any resolved
-# history appear in 2024; the split sits where both sides have enough evaluated calls with history.
+# Time-based split: models and grades are built only from information before this date and tested on
+# calls made after it. The dataset is mostly 2023-2026, so the first calls with any resolved history
+# appear in 2024; the split sits where both sides have enough evaluated calls with history.
 VALIDATION_SPLIT = "2024-10-01"
+# The model comparison uses calls whose analyst already had at least this many scored calls on the
+# call date; before that every factor is only the market default and carries no information.
+MIN_HISTORY_FOR_MODELS = 1
 
 # ---------- Data downloads ----------
 # CSV export of all calls / analyst scores. Switched off: the public website does not offer downloads.

@@ -33,7 +33,9 @@ export function Trust({ v }: { v: number | null }) {
 const RISK_NAMES: Record<string, string> = {
   track: 'Track record (inverse)',
   volatility: 'Volatility',
-  confidence: 'Call trust score (inverted)',
+  implied_move: 'Promised move',
+  confidence: 'Trust score (inverse)',
+  alignment: 'Score alignment (vs consensus)',
 };
 
 function Details({ r }: { r: Rec }) {
@@ -62,7 +64,9 @@ function Details({ r }: { r: Rec }) {
                 <small>
                   {key === 'track' && `${k.prior_hit_rate.toFixed(0)}% hits · ${scope}`}
                   {key === 'volatility' && (k.volatility_annual !== null ? `${k.volatility_annual}% a year, trailing 1 year` : 'not enough price history')}
+                  {key === 'implied_move' && (k.implied_move_pct !== null ? `target is ${k.implied_move_pct}% away from the price` : 'no target price')}
                   {key === 'confidence' && `trust score ${k.confidence_score?.toFixed(0) ?? '–'}`}
+                  {key === 'alignment' && (k.peers ? `${k.peer_share?.toFixed(0)}% of ${k.peers} other analysts held the same view (most said ${k.peer_view})` : 'no other analyst view in the previous 90 days')}
                 </small>
               </span>
               <span className="num mu">{val === null ? '–' : val.toFixed(0)} × {Math.round((k.weights_used[key] ?? 0) * 100)}%</span>

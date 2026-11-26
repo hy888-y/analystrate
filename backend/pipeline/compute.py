@@ -44,11 +44,11 @@ def run_all(as_of: date | None = None) -> dict:
     df = evaluate(recs, prices, splits, as_of)
     df = add_consensus(df)
     scores, market_score = compute_scores(df, sector_of)                      # Module 1, analyst level
-    df = call_level_scores(df, sector_of)  # Module 1, per call (trust score)
-    bias, market_bias = compute_bias(df)   # Module 2
-    df = compute_risk(df)                  # Module 3
+    df = call_level_scores(df, sector_of, market_score["experience_ref_calls"])  # Module 1, per call (trust score)
+    bias, market_bias = compute_bias(df)                                        # Module 2
+    df = compute_risk(df, market_score["hit_rate"] / 100)                       # Module 3
     parts = breakdowns(df, sector_of)
-    print("validating (out-of-sample confidence, bias and risk tests) ...")
+    print("validating (model comparison, out-of-sample tests) ...")
     validation = run_validation(df)                                             # CRISP-DM Evaluation
 
     # ---- write back ----
@@ -93,6 +93,6 @@ def run_all(as_of: date | None = None) -> dict:
         db.session.merge(Meta(key=key, value=json_safe(value)))
     db.session.commit()
     v = validation
-    short = {k: v.get(k) for k in ("status", "split_date", "n_train", "n_test", "weighted_auc",
+    short = {k: v.get(k) for k in ("status", "split_date", "n_train", "n_test", "weighted_auc", "logit_auc",
                                      "risk_meter_auc")}
     return {"summary": summary, "validation": short, "_full_validation": v}

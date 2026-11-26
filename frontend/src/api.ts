@@ -61,16 +61,17 @@ export interface AnalystDetail extends AnalystRow {
 }
 
 export interface RiskInfo {
-  components: { track: number; volatility: number | null; confidence: number | null };
+  components: { track: number; volatility: number | null; implied_move: number | null; confidence: number | null; alignment: number };
   weights_used: Record<string, number>;
   prior_hit_rate: number;
   prior_n: number;
   prior_scope: 'stock' | 'analyst' | 'market';
   volatility_annual: number | null;
+  implied_move_pct: number | null;
   confidence_score: number | null;
-  peers?: number;
-  peer_view?: Rating | null;
-  peer_share?: number | null;
+  peers: number;
+  peer_view: Rating | null;
+  peer_share: number | null;
 }
 
 /** One factor of a call's trust score, as known on the call date. */
@@ -179,6 +180,16 @@ export interface BrokerRow {
   avg_trust: number | null;
 }
 
+export interface ModelRow {
+  model: string;
+  key: string;
+  trained: boolean;
+  auc: number | null;
+  accuracy: number | null;
+  brier: number | null;
+  explainable: string;
+}
+
 export interface Validation {
   status: string;
   reason?: string;
@@ -187,13 +198,28 @@ export interface Validation {
   n_test?: number;
   base_rate_test?: number;
   weighted_auc?: number;
+  logit_auc?: number;
   risk_meter_auc?: number;
+  model_comparison?: ModelRow[];
+  comparison_summary?: { best_auc_model: string; auc_gap_vs_best: number };
+  weights_vs_coef?: { factor: string; weight: number; coefficient: number; coef_share: number; rf_importance: number; same_direction: boolean }[];
   confidence_test?: {
     by_quintile: { quintile: number; calls: number; hit_rate: number; avg_score: number }[];
     by_grade: { grade: Grade; analysts: number; calls: number; hit_rate: number }[];
   };
   bias_test?: { flag: string; measure: 'buy_share' | 'sell_share' | 'avg_overshoot'; flagged: BiasGroup; not_flagged: BiasGroup; persists: boolean | null }[];
+  model_calls?: { min_history: number; n_train: number; n_test: number; base_rate_test: number };
   risk_test?: { level: RiskLevel; calls: number; hit_rate: number }[];
+  lime_test?: {
+    model: string;
+    cases: number;
+    lime_fidelity_r2: number;
+    lime_top_factor_stable_pct: number;
+    lime_agrees_with_transparent_pct: number;
+    transparent_fidelity_r2: number;
+    transparent_stable_pct: number;
+    note: string;
+  };
   min_calls?: {
     rows: { n: number; ci_half_width_pts: number; analysts_with_2n: number; split_half_r: number | null; reliability: number | null }[];
     market_hit_rate: number;
@@ -202,33 +228,6 @@ export interface Validation {
     suggested: number | null;
   };
   cohorts?: { year: number; calls: number; evaluated: number; hit_rate: number | null; buy_share: number; sell_share: number; avg_trust: number | null }[];
-  logit_test?: {
-    status: string;
-    reason?: string;
-    n_train?: number;
-    n_test?: number;
-    features?: string[];
-    metrics?: {
-      auc: number | null;
-      accuracy: number | null;
-      precision: number | null;
-      recall: number | null;
-      f1: number | null;
-      confusion_matrix: number[][];
-    };
-    coefficients?: Record<string, number | null>;
-    intercept?: number | null;
-    comparison?: {
-      factor: string;
-      label: string;
-      lr_coef: number | null;
-      model_weight: number | null;
-      coef_positive: boolean;
-      direction_agrees: boolean;
-    }[];
-    coef_rank?: string[];
-    note?: string;
-  };
 }
 
 export interface BiasGroup {
